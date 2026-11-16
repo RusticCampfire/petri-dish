@@ -4,6 +4,8 @@ Petri Dish models a population evolving on a hexagonal grid. Adjust model parame
 
 [Open the stable simulator](https://rusticcampfire.github.io/petri-dish/)
 
+[Read the model specification](SPECIFICATION.md)
+
 ## Run locally
 
 Open `docs/index.html` in a browser. The simulator runs in the page.
