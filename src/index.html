@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151611">
+  <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
+  <title>Petri Dish Evolution Simulator</title>
+  <style>%%STYLE%%</style>
+</head>
+<body>
+  <main class="desk" aria-label="Simulation workspace">
+    <section class="left-rail" aria-label="Controls">
+      <div class="panel playback">
+        <div class="parameters-title">
+          <h2>Run controls</h2>
+          <span id="run-status" class="status" role="status"><i></i><span>Ready</span></span>
+        </div>
+        <div class="transport">
+          <button type="button" id="play" class="button primary" disabled><span class="icon icon-play" aria-hidden="true"></span><span>Start</span></button>
+          <button type="button" id="step" class="button square" title="Advance one tick" aria-label="Advance one tick" disabled><span class="icon icon-step" aria-hidden="true"></span></button>
+          <button type="button" id="restart" class="button square" title="Restart run" aria-label="Restart run" disabled><span class="icon icon-restart" aria-hidden="true">↻</span></button>
+        </div>
+        <details class="parameter-group playback-settings">
+          <summary>Playback settings</summary>
+          <div class="timing">
+            <div class="label-line"><label for="speed">Simulation speed</label><output id="speed-value" for="speed">Max</output></div>
+            <input id="speed" type="range" min="0" max="7" step="1" value="7">
+            <div class="range-ends" aria-hidden="true"><span>1 tick/s</span><span>Max</span></div>
+            <div class="label-line refresh-label"><label for="refresh">Visualization refresh</label><output id="refresh-value" for="refresh">0.5 s</output></div>
+            <input id="refresh" type="range" min="0" max="6" step="1" value="2">
+            <div class="range-ends" aria-hidden="true"><span>Every tick</span><span>10 s</span></div>
+          </div>
+          <div class="label-line pause-setting">
+            <div><label for="pause-at-tick">Pause at tick</label><small id="pause-at-tick-help">0 = run continuously</small></div>
+            <input id="pause-at-tick" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" aria-describedby="pause-at-tick-help">
+          </div>
+        </details>
+        <p id="run-notice" class="run-notice" hidden></p>
+      </div>
+
+      <div class="panel preset-panel">
+        <label for="model-preset">Presets</label>
+        <select id="model-preset">
+          <option value="" disabled hidden>Custom</option>
+          <option value="default" selected>Default</option>
+          <option value="scarce-food">Scarce food, high deviation</option>
+        </select>
+      </div>
+
+      <div class="panel parameters">
+        <div class="parameters-title"><h2>Model parameters</h2><span class="live"><i></i> Live</span></div>
+        <p id="pending-note" class="pending" role="status" hidden>Changes apply on the next tick.</p>
+        <div id="runtime-controls"></div>
+        <details class="parameter-group setup-group">
+          <summary><span>Initial setup</span><span id="setup-state" class="summary-meta">New run</span></summary>
+          <fieldset id="setup-fields"><legend class="sr-only">Initial setup</legend><div id="setup-controls"></div></fieldset>
+        </details>
+      </div>
+    </section>
+
+    <section class="center" aria-label="Dish and run history">
+      <div class="metric-grid" aria-label="Live readings">
+        <div class="panel metric"><span>Population</span><strong id="m-pop" class="mint">—</strong><small id="m-peak">Peak —</small></div>
+        <div class="panel metric"><span>Food stock</span><strong id="m-food" class="amber">—</strong><small id="m-food-in">Food per hex —</small></div>
+        <div class="panel metric"><span>Mean body mass</span><strong id="m-mass">—</strong><small id="m-min">Minimum —</small></div>
+        <div class="panel metric"><span>Births / deaths</span><strong id="m-balance">—</strong><small id="m-balance-tick">This tick —</small></div>
+      </div>
+
+      <div class="panel dish-panel">
+        <div class="section-head">
+          <div class="dish-brand">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <div><h1>Petri Dish Evolution Simulator</h1><p id="dish-caption">91 hexes · Radius 5</p></div>
+          </div>
+          <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
+        </div>
+        <div class="viewport">
+          <canvas id="dish" tabindex="0" aria-label="Hex dish. Click a hex or use the arrow keys to inspect it."></canvas>
+        </div>
+        <div class="dish-footer">
+          <span class="legend-label">Food stock</span>
+          <span class="scale"><span>0</span><i></i><span id="food-scale">—</span></span>
+          <span class="entity-legend"><i></i> Occupied hex</span>
+        </div>
+      </div>
+
+      <div class="panel history-panel">
+        <div class="section-head history-head">
+          <div><h2>Run history</h2><p id="history-caption">Inherited coefficient by tick</p></div>
+          <div class="tabs" role="group" aria-label="History metric">
+            <button type="button" data-chart="population" aria-pressed="false">Population</button>
+            <button type="button" data-chart="resources" aria-pressed="false">Resources</button>
+            <button type="button" data-chart="genetics" aria-pressed="true">Genetics</button>
+          </div>
+        </div>
+        <div id="gene-select-row" class="gene-choice">
+          <label for="gene-select">Coefficient</label><select id="gene-select"></select>
+        </div>
+        <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
+        <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
+        <section id="population-genetics" class="population-genetics" aria-labelledby="population-genetics-title">
+          <div class="parameters-title">
+            <h3 id="population-genetics-title">Population averages</h3>
+            <span id="population-decision-count" class="subtle"></span>
+          </div>
+          <div id="population-genes-table" class="table-scroll"></div>
+          <p class="note">Coefficients cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+        </section>
+      </div>
+    </section>
+
+    <aside class="right-rail" aria-label="Observation gauges">
+      <div class="panel resource-panel">
+        <h2>Resource stores</h2>
+        <div class="bar-group"><div class="label-line"><span>Energy</span><output id="energy-value">—</output></div><div class="bar"><i id="energy-bar"></i></div></div>
+        <div class="bar-group"><div class="label-line"><span>Waste</span><output id="waste-value">—</output></div><div class="bar purple"><i id="waste-bar"></i></div></div>
+        <div class="readout-grid">
+          <div><span>Food in</span><strong id="food-produced">—</strong></div>
+          <div><span>Food eaten</span><strong id="food-eaten">—</strong></div>
+          <div><span>Food recycled</span><strong id="food-recycled">—</strong></div>
+          <div><span>Total mass</span><strong id="mass-total">—</strong></div>
+        </div>
+      </div>
+
+      <div class="panel activity-panel">
+        <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
+        <div class="activity-head"><span>Activity</span><span>Selected</span><span>Tried</span><span>Done</span></div>
+        <div id="activity-list"></div>
+        <p class="note">Reproduction can skip selected activities.</p>
+        <div class="readout-grid compact">
+          <div><span>Sudden deaths</span><strong id="deaths-sudden">—</strong></div>
+          <div><span>Persistence deaths</span><strong id="deaths-persistence">—</strong></div>
+          <div><span>Mutations</span><strong id="mutations">—</strong></div>
+          <div><span>Max generation</span><strong id="generation">—</strong></div>
+        </div>
+      </div>
+
+      <div class="panel inspector-panel">
+        <div class="parameters-title"><h2>Hex inspector</h2><span id="hex-address" class="hex-address">0, 0</span></div>
+        <div class="readout-grid compact inspector-metrics">
+          <div><span>Occupants</span><strong id="hex-count">—</strong></div>
+          <div><span>Food stock</span><strong id="hex-food">—</strong></div>
+        </div>
+        <p id="empty-hex" class="note">Select a hex in the dish.</p>
+        <div id="entity-details" hidden>
+          <label class="entity-label" for="entity-select">Entity</label>
+          <select id="entity-select"></select>
+          <div class="entity-values">
+            <div><span>Mass</span><strong id="entity-mass"></strong></div>
+            <div><span>Energy</span><strong id="entity-energy"></strong></div>
+            <div><span>Waste</span><strong id="entity-waste"></strong></div>
+          </div>
+          <div class="note" id="entity-origin"></div>
+          <details class="entity-genes" open>
+            <summary>Decision coefficients <span id="entity-decision-tick" class="summary-meta"></span></summary>
+            <div id="entity-genes-table" class="table-scroll" role="region" aria-label="Decision coefficients and probabilities" tabindex="0"></div>
+          </details>
+        </div>
+        <p id="inspected-tick" class="note" hidden></p>
+      </div>
+    </aside>
+  </main>
+  <footer class="page-actions">
+    <button id="export" class="button" type="button" disabled><span class="icon icon-download" aria-hidden="true"></span><span>Export results</span></button>
+  </footer>
+  <noscript><p class="noscript">Enable JavaScript to run Petri Dish.</p></noscript>
+  <script type="text/plain" id="worker-source">%%WORKER%%</script>
+  <script>%%APP%%</script>
+</body>
+</html>

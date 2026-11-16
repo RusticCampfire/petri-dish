@@ -1,0 +1,2157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151611">
+  <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
+  <title>Petri Dish Evolution Simulator</title>
+  <style>:root {
+  color-scheme: dark;
+  --background: #131411;
+  --panel: #1d1f18;
+  --panel-top: #20221a;
+  --border: #34362a;
+  --line: #33352b;
+  --ink: #f0ecdd;
+  --muted: #b1af9d;
+  --soft: #a19e8c;
+  --accent: #edb766;
+  --accent-bright: #f6ca86;
+  --mint: #c9dc9d;
+  --purple: #ba9ecc;
+  --danger: #e9a09a;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 14px/1.45 Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: radial-gradient(ellipse at 49% -15%, #27271a 0, var(--background) 57%); }
+button, input, select { font: inherit; }
+button, input[type=range], summary, select { cursor: pointer; }
+button:disabled, input:disabled, select:disabled { cursor: default; opacity: .5; }
+:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+[hidden] { display: none !important; }
+
+.dish-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  background: #332819;
+  border: 1px solid #6e5131;
+  border-radius: 11px;
+}
+.brand-mark::before { content: ""; position: absolute; inset: 7px; border: 1px solid #c28b4b; border-radius: 50%; }
+.brand-mark i { position: absolute; border-radius: 50%; background: var(--accent); width: 4px; height: 4px; }
+.brand-mark i:nth-child(1) { top: 14px; left: 13px; }
+.brand-mark i:nth-child(2) { top: 20px; left: 21px; width: 5px; height: 5px; background: #ddde9f; }
+.brand-mark i:nth-child(3) { top: 23px; left: 14px; width: 3px; height: 3px; opacity: .72; }
+h1, h2, p { margin: 0; }
+h1 { font-size: clamp(16px, 1.45vw, 20px); letter-spacing: -.025em; line-height: 1.2; font-weight: 710; }
+h2 { font-size: 15px; line-height: 1.25; letter-spacing: -.016em; font-weight: 670; }
+
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.status i, .live i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: currentColor; }
+.status.running, .live { color: var(--mint); }
+.status.checkpoint { color: var(--accent); }
+.status.error { color: var(--danger); }
+
+.button {
+  align-items: center;
+  justify-content: center;
+  display: inline-flex;
+  gap: 9px;
+  min-height: 37px;
+  padding: 0 13px;
+  border: 1px solid #4a4a39;
+  border-radius: 8px;
+  background: #27291f;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.button:not(:disabled):hover { background: #34362a; border-color: #5b5c45; }
+.button.primary { flex: 1; background: var(--accent); border-color: var(--accent); color: #21190d; font-size: 14px; }
+.button.primary:not(:disabled):hover { background: var(--accent-bright); border-color: var(--accent-bright); }
+.button.square { width: 40px; padding: 0; flex: 0 0 40px; }
+.icon { display: inline-block; position: relative; width: 14px; height: 14px; flex: 0 0 14px; }
+.icon-play::before, .icon-step::before { content: ""; position: absolute; top: 2px; left: 3px; border: 5px solid transparent; border-right: 0; border-left: 8px solid currentColor; }
+.icon-step::before { left: 0; border-left-width: 7px; }
+.icon-step::after, .icon-pause::before, .icon-pause::after { content: ""; position: absolute; width: 2px; height: 11px; background: currentColor; top: 2px; left: 10px; border-radius: 1px; }
+.icon-pause::before { left: 3px; width: 3px; }
+.icon-pause::after { left: 8px; width: 3px; }
+.icon-restart { font-size: 23px; line-height: 12px; margin-top: -3px; }
+.icon-download { border-bottom: 1px solid currentColor; border-radius: 1px; }
+.icon-download::before { content: ""; position: absolute; width: 1px; height: 8px; background: currentColor; left: 6px; top: 0; }
+.icon-download::after { content: ""; position: absolute; width: 5px; height: 5px; top: 3px; left: 4px; transform: rotate(45deg); border-right: 1px solid; border-bottom: 1px solid; }
+
+.desk {
+  display: grid;
+  grid-template-columns: minmax(216px, .89fr) minmax(410px, 2.38fr) minmax(360px, 1fr);
+  align-items: start;
+  gap: clamp(13px, 1.4vw, 20px);
+  max-width: 1510px;
+  margin: 0 auto;
+  padding: 20px clamp(15px, 3vw, 36px) 16px;
+}
+.page-actions { display: flex; justify-content: flex-end; max-width: 1510px; margin: 0 auto; padding: 0 clamp(15px, 3vw, 36px) 24px; }
+.left-rail, .center, .right-rail { display: grid; gap: 15px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
+.playback, .resource-panel, .activity-panel, .inspector-panel { padding: 15px; }
+.transport { display: flex; gap: 7px; margin: 12px 0 10px; }
+.timing { padding-top: 4px; }
+.label-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; font-size: 12px; }
+.label-line output { font: 11px var(--mono); color: var(--accent-bright); text-align: right; white-space: nowrap; }
+.pause-setting { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pause-setting small { display: block; color: var(--soft); font-size: 10px; }
+.pause-setting input { width: 80px; height: 27px; padding: 0 6px; text-align: right; font: 12px var(--mono); }
+.refresh-label { margin-top: 13px; }
+input[type=range] {
+  --fill: 0%;
+  width: 100%;
+  height: 18px;
+  margin: 3px 0 0;
+  vertical-align: top;
+  appearance: none;
+  background: transparent;
+}
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, #d8a45f var(--fill), #404134 var(--fill)); }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, #d8a45f var(--fill), #404134 var(--fill)); }
+input[type=range]::-webkit-slider-thumb { appearance: none; margin-top: -4px; width: 12px; height: 12px; border: 1px solid #fff0c5; border-radius: 50%; background: var(--accent); }
+input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px solid #fff0c5; border-radius: 50%; background: var(--accent); }
+.range-ends { display: flex; justify-content: space-between; color: var(--soft); font-size: 10px; }
+.run-notice { margin-top: 12px; color: var(--accent-bright); font-size: 12px; }
+.run-notice.error { color: var(--danger); }
+.parameters-title { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 20px; }
+.parameters > .parameters-title { padding: 15px 14px 13px; }
+.preset-panel { display: grid; gap: 6px; padding: 10px 14px; }
+.preset-panel label { font-size: 12px; font-weight: 620; }
+.preset-panel select { width: 100%; }
+.live { display: inline-flex; align-items: center; gap: 5px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .055em; }
+.live i { width: 6px; height: 6px; }
+.pending { padding: 0 14px 10px; color: var(--accent-bright); font-size: 11px; }
+.parameter-group { border-top: 1px solid var(--line); }
+.parameter-group summary, .entity-genes summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  list-style: none;
+  color: var(--ink);
+  min-height: 42px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 620;
+}
+.playback-settings summary { min-height: 29px; padding: 6px 0 0; }
+.playback-settings[open] summary { margin-bottom: 6px; }
+.parameter-group summary::-webkit-details-marker, .entity-genes summary::-webkit-details-marker { display: none; }
+.parameter-group summary::before, .entity-genes summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border: solid var(--muted);
+  border-width: 0 1px 1px 0;
+  transform: rotate(-45deg);
+  flex: 0 0 5px;
+}
+details[open] > summary::before { transform: rotate(45deg) translateY(-1px); }
+summary:hover { background: #ffffff06; }
+.summary-meta { margin-left: auto; color: var(--soft); font-size: 10px; font-weight: 450; }
+.knobs { padding: 0 13px 12px; }
+.knob {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(46px, 63px);
+  grid-template-rows: auto 15px;
+  gap: 1px 7px;
+  align-items: center;
+  padding-bottom: 6px;
+}
+.knob + .knob { margin-top: 5px; }
+.knob label { font-size: 11px; min-width: 0; color: #e4e0ce; }
+.knob .unit { font: 9px var(--mono); color: var(--soft); margin-left: 4px; white-space: nowrap; }
+.knob input[type=range] { grid-column: 1 / -1; margin: 0; }
+input[type=number], select { min-width: 0; border: 1px solid #424436; border-radius: 5px; background: #181a14; color: var(--ink); }
+.knob input[type=number] { width: 100%; height: 25px; padding: 0 5px; text-align: right; font: 11px var(--mono); }
+.knob input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.knob input[type=number] { appearance: textfield; }
+.knob-check { display: flex; gap: 7px; align-items: center; font-size: 11px; margin: 9px 0 5px; }
+.knob-check input { margin: 0; accent-color: var(--accent); }
+fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
+.derived { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); margin: 3px 0 0; }
+.derived output { color: var(--ink); font-family: var(--mono); }
+
+.metric-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.metric { padding: 12px 12px 10px; min-height: 93px; }
+.metric > span { color: var(--muted); display: block; font-size: 11px; line-height: 1.4; }
+.metric strong { display: block; font: 590 clamp(16px, 1.7vw, 26px)/1.28 var(--mono); margin: 4px 0 2px; letter-spacing: -.053em; overflow-wrap: anywhere; }
+#m-balance { font-size: clamp(13px,1.38vw,22px); }
+.metric small { display: block; font-size: 10px; color: var(--soft); }
+.mint { color: var(--mint); }
+.amber { color: var(--accent); }
+
+.dish-panel, .history-panel { overflow: hidden; }
+.section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 15px 12px; }
+.section-head p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.tick-readout { display: flex; align-items: center; flex-shrink: 0; gap: 7px; padding: 4px 8px; border: 1px solid #3a3d2d; border-radius: 5px; background: #191b14; font-size: 10px; color: var(--muted); }
+.tick-readout strong { color: var(--accent-bright); font: 12px var(--mono); }
+.viewport {
+  position: relative;
+  margin: 0 9px;
+  border: 1px solid #343729;
+  border-radius: 8px;
+  min-height: 250px;
+  height: clamp(290px, 32vw, 486px);
+  background: radial-gradient(ellipse at 50% 50%, #1f2718 0, #171d14 39%, #10130f 76%);
+  overflow: hidden;
+}
+#dish { display: block; width: 100%; height: 100%; outline-offset: -3px; cursor: crosshair; }
+.dish-footer { display: flex; align-items: center; gap: 8px; padding: 10px 13px 11px; color: var(--muted); font-size: 10px; }
+.scale { display: flex; align-items: center; gap: 6px; font: 10px var(--mono); color: var(--ink); }
+.scale i { display: block; width: clamp(38px, 6vw, 82px); height: 6px; border-radius: 8px; background: linear-gradient(to right, #282e20, #596039, #c28b40); }
+.entity-legend { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.entity-legend i { display: block; width: 7px; height: 7px; border-radius: 50%; background: #d3e9a5; box-shadow: 0 0 5px #d3e9a550; }
+
+.tabs { display: flex; gap: 2px; padding: 2px; border: 1px solid #3c3e31; background: #181a14; border-radius: 6px; }
+.tabs button { border: 0; border-radius: 4px; background: transparent; color: var(--muted); padding: 5px 7px; font-size: 10px; font-weight: 570; }
+.tabs button[aria-pressed=true] { background: #3b3827; color: #f2dab2; }
+.tabs button:hover { color: var(--ink); }
+.chart-wrap { height: 158px; margin: 0 9px; }
+#history { display: block; width: 100%; height: 100%; }
+.chart-legend { color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; min-height: 32px; padding: 1px 15px 9px; font-size: 10px; }
+.chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-legend i { display: inline-block; background: var(--swatch); width: 9px; height: 3px; border-radius: 3px; }
+.gene-choice { display: flex; align-items: center; gap: 8px; padding: 0 15px 10px; color: var(--muted); font-size: 11px; }
+.population-genetics { margin: 0 15px; padding: 10px 0 12px; border-top: 1px solid var(--line); }
+select { padding: 4px 6px; font-size: 11px; }
+
+.resource-panel h2 { margin-bottom: 13px; }
+.bar-group + .bar-group { margin-top: 11px; }
+.bar-group output { color: var(--ink); }
+.bar { background: #34382b; height: 5px; margin-top: 5px; border-radius: 6px; overflow: hidden; }
+.bar i { display: block; width: 0%; height: 100%; background: var(--mint); }
+.bar.purple i { background: var(--purple); }
+.readout-grid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 10px 8px;
+  border-top: 1px solid var(--line);
+  margin-top: 13px;
+  padding-top: 11px;
+}
+.readout-grid span, .entity-values span { display: block; color: var(--muted); font-size: 10px; }
+.readout-grid strong, .entity-values strong { display: block; color: var(--ink); font: 13px var(--mono); margin-top: 4px; overflow-wrap: anywhere; }
+.readout-grid.compact { margin-top: 12px; }
+.subtle { color: var(--soft); font-size: 10px; white-space: nowrap; }
+.activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 46px 32px 34px; align-items: center; gap: 4px; }
+.activity-head { padding: 9px 0 4px; color: var(--soft); font-size: 10px; }
+.activity-head > span:not(:first-child), .activity-row > span:not(:first-child) { text-align: right; }
+.activity-row { min-height: 25px; border-top: 1px solid var(--line); color: #dfdccd; font-size: 11px; }
+.activity-row .value { color: var(--muted); font: 11px var(--mono); }
+.activity-row .success { color: var(--mint); }
+.note { color: var(--soft); font-size: 10px; margin-top: 8px; }
+.hex-address { color: var(--accent-bright); font: 11px var(--mono); border: 1px solid #4a4230; background: #28251a; border-radius: 5px; padding: 3px 6px; }
+.inspector-metrics { border: 0; margin-top: 1px !important; }
+.entity-label { display: block; color: var(--muted); margin: 10px 0 5px; font-size: 11px; }
+#entity-select { width: 100%; }
+.entity-values { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; margin-top: 10px; }
+.population-genetics h3 { margin: 0; font-size: 12px; font-weight: 620; }
+.entity-genes { border-top: 1px solid var(--line); margin-top: 10px; }
+.entity-genes summary { padding: 7px 0; min-height: 29px; font-size: 11px; }
+.table-scroll { overflow-x: auto; }
+.coefficient-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.coefficient-table th, .coefficient-table td { padding: 3px 2px; text-align: right; border-bottom: 1px solid var(--line); }
+.coefficient-table th:first-child { text-align: left; }
+.coefficient-table td { font-family: var(--mono); white-space: nowrap; }
+.coefficient-table thead th { color: var(--muted); }
+.population-genetics .coefficient-table { font-size: 11px; }
+.population-genetics td:last-child, .entity-genes td:nth-child(2) { color: var(--mint); }
+.population-genetics .coefficient-table th, .population-genetics .coefficient-table td { padding: 5px 4px; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.noscript { max-width: 400px; margin: auto; padding: 20px; }
+
+@media (max-width: 1120px) {
+  .desk { grid-template-columns: minmax(200px, 225px) minmax(0, 1fr); }
+  .right-rail { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+}
+@media (max-width: 700px) {
+  .desk { grid-template-columns: minmax(0, 1fr); padding: 13px 12px 16px; }
+  .page-actions { padding: 0 12px 20px; }
+  .left-rail { display: contents; }
+  .playback { grid-row: 1; }
+  .center { grid-row: 2; }
+  .preset-panel { grid-row: 3; }
+  .parameters { grid-row: 4; }
+  .right-rail { grid-column: 1; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+  .inspector-panel { grid-column: 1 / -1; }
+  .timing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; }
+  .timing .label-line { grid-row: 1; }
+  .timing input { grid-row: 2; }
+  .timing .range-ends { grid-row: 3; }
+  .refresh-label { margin-top: 0; }
+  .viewport { height: clamp(265px, 67vw, 420px); }
+}
+@media (max-width: 390px) {
+  .metric-grid { gap: 6px; grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .metric { min-height: 73px; }
+  .right-rail { grid-template-columns: minmax(0,1fr); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  button { transition: background-color .14s, border-color .14s; }
+}
+</style>
+</head>
+<body>
+  <main class="desk" aria-label="Simulation workspace">
+    <section class="left-rail" aria-label="Controls">
+      <div class="panel playback">
+        <div class="parameters-title">
+          <h2>Run controls</h2>
+          <span id="run-status" class="status" role="status"><i></i><span>Ready</span></span>
+        </div>
+        <div class="transport">
+          <button type="button" id="play" class="button primary" disabled><span class="icon icon-play" aria-hidden="true"></span><span>Start</span></button>
+          <button type="button" id="step" class="button square" title="Advance one tick" aria-label="Advance one tick" disabled><span class="icon icon-step" aria-hidden="true"></span></button>
+          <button type="button" id="restart" class="button square" title="Restart run" aria-label="Restart run" disabled><span class="icon icon-restart" aria-hidden="true">↻</span></button>
+        </div>
+        <details class="parameter-group playback-settings">
+          <summary>Playback settings</summary>
+          <div class="timing">
+            <div class="label-line"><label for="speed">Simulation speed</label><output id="speed-value" for="speed">Max</output></div>
+            <input id="speed" type="range" min="0" max="7" step="1" value="7">
+            <div class="range-ends" aria-hidden="true"><span>1 tick/s</span><span>Max</span></div>
+            <div class="label-line refresh-label"><label for="refresh">Visualization refresh</label><output id="refresh-value" for="refresh">0.5 s</output></div>
+            <input id="refresh" type="range" min="0" max="6" step="1" value="2">
+            <div class="range-ends" aria-hidden="true"><span>Every tick</span><span>10 s</span></div>
+          </div>
+          <div class="label-line pause-setting">
+            <div><label for="pause-at-tick">Pause at tick</label><small id="pause-at-tick-help">0 = run continuously</small></div>
+            <input id="pause-at-tick" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" aria-describedby="pause-at-tick-help">
+          </div>
+        </details>
+        <p id="run-notice" class="run-notice" hidden></p>
+      </div>
+
+      <div class="panel preset-panel">
+        <label for="model-preset">Presets</label>
+        <select id="model-preset">
+          <option value="" disabled hidden>Custom</option>
+          <option value="default" selected>Default</option>
+          <option value="scarce-food">Scarce food, high deviation</option>
+        </select>
+      </div>
+
+      <div class="panel parameters">
+        <div class="parameters-title"><h2>Model parameters</h2><span class="live"><i></i> Live</span></div>
+        <p id="pending-note" class="pending" role="status" hidden>Changes apply on the next tick.</p>
+        <div id="runtime-controls"></div>
+        <details class="parameter-group setup-group">
+          <summary><span>Initial setup</span><span id="setup-state" class="summary-meta">New run</span></summary>
+          <fieldset id="setup-fields"><legend class="sr-only">Initial setup</legend><div id="setup-controls"></div></fieldset>
+        </details>
+      </div>
+    </section>
+
+    <section class="center" aria-label="Dish and run history">
+      <div class="metric-grid" aria-label="Live readings">
+        <div class="panel metric"><span>Population</span><strong id="m-pop" class="mint">—</strong><small id="m-peak">Peak —</small></div>
+        <div class="panel metric"><span>Food stock</span><strong id="m-food" class="amber">—</strong><small id="m-food-in">Food per hex —</small></div>
+        <div class="panel metric"><span>Mean body mass</span><strong id="m-mass">—</strong><small id="m-min">Minimum —</small></div>
+        <div class="panel metric"><span>Births / deaths</span><strong id="m-balance">—</strong><small id="m-balance-tick">This tick —</small></div>
+      </div>
+
+      <div class="panel dish-panel">
+        <div class="section-head">
+          <div class="dish-brand">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <div><h1>Petri Dish Evolution Simulator</h1><p id="dish-caption">91 hexes · Radius 5</p></div>
+          </div>
+          <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
+        </div>
+        <div class="viewport">
+          <canvas id="dish" tabindex="0" aria-label="Hex dish. Click a hex or use the arrow keys to inspect it."></canvas>
+        </div>
+        <div class="dish-footer">
+          <span class="legend-label">Food stock</span>
+          <span class="scale"><span>0</span><i></i><span id="food-scale">—</span></span>
+          <span class="entity-legend"><i></i> Occupied hex</span>
+        </div>
+      </div>
+
+      <div class="panel history-panel">
+        <div class="section-head history-head">
+          <div><h2>Run history</h2><p id="history-caption">Inherited coefficient by tick</p></div>
+          <div class="tabs" role="group" aria-label="History metric">
+            <button type="button" data-chart="population" aria-pressed="false">Population</button>
+            <button type="button" data-chart="resources" aria-pressed="false">Resources</button>
+            <button type="button" data-chart="genetics" aria-pressed="true">Genetics</button>
+          </div>
+        </div>
+        <div id="gene-select-row" class="gene-choice">
+          <label for="gene-select">Coefficient</label><select id="gene-select"></select>
+        </div>
+        <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
+        <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
+        <section id="population-genetics" class="population-genetics" aria-labelledby="population-genetics-title">
+          <div class="parameters-title">
+            <h3 id="population-genetics-title">Population averages</h3>
+            <span id="population-decision-count" class="subtle"></span>
+          </div>
+          <div id="population-genes-table" class="table-scroll"></div>
+          <p class="note">Coefficients cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+        </section>
+      </div>
+    </section>
+
+    <aside class="right-rail" aria-label="Observation gauges">
+      <div class="panel resource-panel">
+        <h2>Resource stores</h2>
+        <div class="bar-group"><div class="label-line"><span>Energy</span><output id="energy-value">—</output></div><div class="bar"><i id="energy-bar"></i></div></div>
+        <div class="bar-group"><div class="label-line"><span>Waste</span><output id="waste-value">—</output></div><div class="bar purple"><i id="waste-bar"></i></div></div>
+        <div class="readout-grid">
+          <div><span>Food in</span><strong id="food-produced">—</strong></div>
+          <div><span>Food eaten</span><strong id="food-eaten">—</strong></div>
+          <div><span>Food recycled</span><strong id="food-recycled">—</strong></div>
+          <div><span>Total mass</span><strong id="mass-total">—</strong></div>
+        </div>
+      </div>
+
+      <div class="panel activity-panel">
+        <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
+        <div class="activity-head"><span>Activity</span><span>Selected</span><span>Tried</span><span>Done</span></div>
+        <div id="activity-list"></div>
+        <p class="note">Reproduction can skip selected activities.</p>
+        <div class="readout-grid compact">
+          <div><span>Sudden deaths</span><strong id="deaths-sudden">—</strong></div>
+          <div><span>Persistence deaths</span><strong id="deaths-persistence">—</strong></div>
+          <div><span>Mutations</span><strong id="mutations">—</strong></div>
+          <div><span>Max generation</span><strong id="generation">—</strong></div>
+        </div>
+      </div>
+
+      <div class="panel inspector-panel">
+        <div class="parameters-title"><h2>Hex inspector</h2><span id="hex-address" class="hex-address">0, 0</span></div>
+        <div class="readout-grid compact inspector-metrics">
+          <div><span>Occupants</span><strong id="hex-count">—</strong></div>
+          <div><span>Food stock</span><strong id="hex-food">—</strong></div>
+        </div>
+        <p id="empty-hex" class="note">Select a hex in the dish.</p>
+        <div id="entity-details" hidden>
+          <label class="entity-label" for="entity-select">Entity</label>
+          <select id="entity-select"></select>
+          <div class="entity-values">
+            <div><span>Mass</span><strong id="entity-mass"></strong></div>
+            <div><span>Energy</span><strong id="entity-energy"></strong></div>
+            <div><span>Waste</span><strong id="entity-waste"></strong></div>
+          </div>
+          <div class="note" id="entity-origin"></div>
+          <details class="entity-genes" open>
+            <summary>Decision coefficients <span id="entity-decision-tick" class="summary-meta"></span></summary>
+            <div id="entity-genes-table" class="table-scroll" role="region" aria-label="Decision coefficients and probabilities" tabindex="0"></div>
+          </details>
+        </div>
+        <p id="inspected-tick" class="note" hidden></p>
+      </div>
+    </aside>
+  </main>
+  <footer class="page-actions">
+    <button id="export" class="button" type="button" disabled><span class="icon icon-download" aria-hidden="true"></span><span>Export results</span></button>
+  </footer>
+  <noscript><p class="noscript">Enable JavaScript to run Petri Dish.</p></noscript>
+  <script type="text/plain" id="worker-source">"use strict";
+
+const Petri = (() => {
+  const ACTIVITIES = ["Excretion", "Growth", "Shrinking", "Movement", "Reproduction"];
+  const COEFFICIENTS = ["Bias", "Mass", "Energy", "Waste"];
+  const DEFAULT_SETUP = Object.freeze({
+    radius: 5, founders: 30, initialMass: 10, initialEnergy: 40, initialWaste: 0,
+    initialFood: 0, biasLow: -3, biasHigh: -1.5, weightRange: 0.01,
+  });
+  const DEFAULT_PARAMS = Object.freeze({
+    foodMean: 3, foodSD: 1.5, intake: 0.35, energyPerFood: 1, energyWasteRatio: 2,
+    foodPerMass: 1, energyCapacity: 8, wasteCapacity: 4, persistence: 0.15,
+    excretionRate: 1.2, excretionCost: 0.05, growthFraction: 0.1, shrinkFraction: 0.1,
+    growthSpread: 0.2, movementCost: 0.02, reproductionCost: 2, divisionLoss: 0.1,
+    offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, mutationWidth: 0.2,
+    mutationSharpness: 16, mutationTail: 3, mutateParent: false,
+  });
+  const DEFAULT_PAUSE_TICK = 0;
+  const DIRECTIONS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+  const UINT32 = 4294967296;
+
+  function avalanche(value) {
+    value = Math.imul(value ^ (value >>> 16), 0x7feb352d);
+    value = Math.imul(value ^ (value >>> 15), 0x846ca68b);
+    return (value ^ (value >>> 16)) >>> 0;
+  }
+
+  class Random {
+    constructor() {
+      this.state = new Uint32Array(4);
+    }
+
+    reseed(globalSeed, salt) {
+      for (let i = 0; i < 4; i++) {
+        this.state[i] = avalanche((globalSeed[i] + salt[i] + Math.imul(i + 1, 0x9e3779b9)) >>> 0);
+      }
+      if (this.state.every(value => value === 0)) this.state[0] = 1;
+    }
+
+    word() {
+      const s = this.state;
+      const rotated = Math.imul(s[1], 5);
+      const result = Math.imul((rotated << 7) | (rotated >>> 25), 9);
+      const shift = s[1] << 9;
+      s[2] ^= s[0];
+      s[3] ^= s[1];
+      s[1] ^= s[2];
+      s[0] ^= s[3];
+      s[2] ^= shift;
+      s[3] = (s[3] << 11) | (s[3] >>> 21);
+      return result >>> 0;
+    }
+
+    unit() {
+      return ((this.word() >>> 5) * 67108864 + (this.word() >>> 6)) / 9007199254740992;
+    }
+
+    logUniform() {
+      // Leading zero words let very small probabilities remain sampleable.
+      let zeroWords = 0;
+      let high = this.word();
+      while (high === 0) {
+        zeroWords++;
+        high = this.word();
+      }
+      return Math.log((high + this.word() / UINT32) / UINT32) - zeroWords * 32 * Math.LN2;
+    }
+  }
+
+  function logGamma(shape, random) {
+    if (shape < 1) return logGamma(shape + 1, random) + random.logUniform() / shape;
+    const d = shape - 1 / 3;
+    const c = 1 / Math.sqrt(9 * d);
+    while (true) {
+      const z = Math.sqrt(-2 * random.logUniform()) * Math.cos(2 * Math.PI * random.unit());
+      const next = 1 + c * z;
+      if (next <= 0) continue;
+      const logV = 3 * Math.log(next);
+      const u = random.unit();
+      if (u < 1 - 0.0331 * z ** 4 || Math.log(u) < 0.5 * z * z + d * (logV - Math.expm1(logV))) {
+        return Math.log(d) + logV;
+      }
+    }
+  }
+
+  function foodIncome(mean, deviation, random) {
+    if (mean === 0 || deviation === 0) return mean;
+    const shape = (mean / deviation) ** 2;
+    return Math.exp(logGamma(shape, random) + Math.log(mean / shape));
+  }
+
+  function mutateValue(value, params, random) {
+    if (value === 0) return 0;
+    const k = params.mutationSharpness;
+    const a = 1 / k;
+    const b = (params.mutationTail - 1) / k;
+    while (true) {
+      // A ratio of independent gamma variates gives the specified beta-prime transform.
+      const logMagnitude = Math.log(params.mutationWidth) + (logGamma(a, random) - logGamma(b, random)) / k;
+      const sign = random.unit() < 0.5 ? -1 : 1;
+      const candidate = logMagnitude < 700
+        ? value * (1 + sign * Math.exp(logMagnitude))
+        : sign * Math.sign(value) * Math.exp(Math.log(Math.abs(value)) + logMagnitude);
+      if (Number.isFinite(candidate)) return candidate;
+    }
+  }
+
+  function chooseActivity(logit, random, rareOdds = Math.exp(-Math.abs(logit))) {
+    const logRare = -Math.abs(logit) - Math.log1p(rareOdds);
+    const rare = random.logUniform() < logRare;
+    return logit < 0 ? rare : !rare;
+  }
+
+  function dotProduct(entity, offset) {
+    const genes = entity.genes;
+    const bias = genes[offset];
+    const massWeight = genes[offset + 1];
+    const energyWeight = genes[offset + 2];
+    const wasteWeight = genes[offset + 3];
+    const sum = bias + massWeight * entity.mass + energyWeight * entity.energy + wasteWeight * entity.waste;
+    if (Number.isFinite(sum)) return sum;
+    const weightScale = Math.max(Math.abs(bias), Math.abs(massWeight), Math.abs(energyWeight), Math.abs(wasteWeight));
+    const stateScale = Math.max(1, entity.mass, entity.energy, entity.waste);
+    const scaled = (bias / weightScale) / stateScale
+      + (massWeight / weightScale) * (entity.mass / stateScale)
+      + (energyWeight / weightScale) * (entity.energy / stateScale)
+      + (wasteWeight / weightScale) * (entity.waste / stateScale);
+    return (scaled * weightScale) * stateScale;
+  }
+
+  function circumference(mass) {
+    return 2 * Math.sqrt(Math.PI) * Math.sqrt(mass);
+  }
+
+  function fits(amount, capacity) {
+    return Number.isFinite(amount) && (amount <= capacity || amount - capacity <= 4 * Number.EPSILON * amount);
+  }
+
+  function makeGrid(radius, food) {
+    const cells = [];
+    const lookup = new Map();
+    for (let r = -radius; r <= radius; r++) {
+      for (let q = Math.max(-radius, -r - radius); q <= Math.min(radius, -r + radius); q++) {
+        lookup.set(q + "," + r, cells.length);
+        cells.push({q, r, food, released: 0, feeders: [], neighbors: []});
+      }
+    }
+    for (const cell of cells) {
+      for (const [dq, dr] of DIRECTIONS) {
+        const neighbor = lookup.get((cell.q + dq) + "," + (cell.r + dr));
+        if (neighbor !== undefined) cell.neighbors.push(neighbor);
+      }
+    }
+    return cells;
+  }
+
+  function feedCell(cell, params, wastePerFood) {
+    const feeders = cell.feeders;
+    if (cell.food <= 0 || feeders.length === 0) return 0;
+    let totalDemand = 0;
+    let upper = 0;
+    for (const entity of feeders) {
+      const freeEnergy = params.energyCapacity * entity.mass - entity.energy;
+      const freeWaste = params.wasteCapacity * entity.mass - entity.waste;
+      entity.demand = freeEnergy > 0 && freeWaste > 0
+        ? Math.min(params.intake * entity.surface, freeEnergy / params.energyPerFood, freeWaste / wastePerFood)
+        : 0;
+      totalDemand += entity.demand;
+      upper = Math.max(upper, entity.demand / entity.surface);
+    }
+
+    const target = Math.min(cell.food, totalDemand);
+    if (target === 0) return 0;
+    let lambda = Infinity;
+    if (target < totalDemand) {
+      let lower = 0;
+      for (let iteration = 0; iteration < 60; iteration++) {
+        const middle = lower + (upper - lower) / 2;
+        if (middle === lower || middle === upper) break;
+        let sum = 0;
+        for (const entity of feeders) sum += Math.min(entity.demand, middle * entity.surface);
+        if (sum <= target) lower = middle;
+        else upper = middle;
+        if (sum === target) break;
+      }
+      lambda = lower;
+    }
+
+    let eaten = 0;
+    for (const entity of feeders) {
+      const amount = Math.min(entity.demand, lambda * entity.surface);
+      entity.energy += amount * params.energyPerFood;
+      entity.waste += amount * wastePerFood;
+      eaten += amount;
+    }
+    cell.food = Math.max(0, cell.food - eaten);
+    return eaten;
+  }
+
+  function tickStats() {
+    return {
+      births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0,
+      foodProduced: 0, foodConsumed: 0, foodRecycled: 0,
+      activities: ACTIVITIES.map(() => ({selected: 0, attempted: 0, succeeded: 0})),
+      decisionCount: 0, meanDecisionProbabilities: ACTIVITIES.map(() => null),
+    };
+  }
+
+  function entityState(entity) {
+    return {
+      id: entity.id, parentId: entity.parentId, founderId: entity.founderId,
+      generation: entity.generation, born: entity.born, cell: entity.cell,
+      mass: entity.mass, surface: entity.surface, energy: entity.energy, waste: entity.waste,
+      coefficients: Array.from(entity.genes),
+      lastDecisionProbabilities: entity.lastDecisionProbabilities
+        ? Array.from(entity.lastDecisionProbabilities) : null,
+    };
+  }
+
+  class Simulation {
+    constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed} = {}) {
+      this.params = {...DEFAULT_PARAMS, ...params};
+      this.setup = {...DEFAULT_SETUP, ...setup};
+      this.entropy = entropy;
+      this.globalSeed = seed ? new Uint32Array(seed) : entropy(new Uint32Array(4));
+      this.tickSalt = new Uint32Array(4);
+      this.random = new Random();
+      this.random.reseed(this.globalSeed, this.tickSalt);
+      this.tick = 0;
+      this.nextId = 1;
+      this.minMass = this.setup.initialMass * 0.01;
+      this.cells = makeGrid(this.setup.radius, this.setup.initialFood);
+      this.entities = [];
+      this.history = [];
+      this.parameterChanges = [];
+      this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0};
+      this.peakPopulation = this.setup.founders;
+      this.stats = tickStats();
+      this.initialParams = {...this.params};
+      this.makeFounders();
+      this.record();
+    }
+
+    makeFounders() {
+      const {founders, initialMass, initialEnergy, initialWaste, biasLow, biasHigh, weightRange} = this.setup;
+      const places = this.cells.map((_, index) => index);
+      const energy = Math.min(initialEnergy, initialMass * this.params.energyCapacity);
+      const waste = Math.min(initialWaste, initialMass * this.params.wasteCapacity);
+      for (let i = 0; i < founders; i++) {
+        const chosen = i + Math.floor(this.random.unit() * (places.length - i));
+        [places[i], places[chosen]] = [places[chosen], places[i]];
+        const genes = new Float64Array(ACTIVITIES.length * COEFFICIENTS.length);
+        for (let offset = 0; offset < genes.length; offset += 4) {
+          genes[offset] = biasLow + this.random.unit() * (biasHigh - biasLow);
+          for (let weight = 1; weight < 4; weight++) {
+            genes[offset + weight] = weightRange * (2 * this.random.unit() - 1);
+          }
+        }
+        this.entities.push(this.makeEntity(places[i], initialMass, energy, waste, genes));
+      }
+    }
+
+    makeEntity(cell, mass, energy, waste, genes, parent) {
+      const id = this.nextId++;
+      return {
+        id, cell, mass, surface: circumference(mass), energy, waste, genes,
+        parentId: parent?.id ?? null, founderId: parent?.founderId ?? id,
+        generation: parent ? parent.generation + 1 : 0, born: this.tick,
+        demand: 0, plan: [], lastDecisionProbabilities: null,
+      };
+    }
+
+    applyParameters(changes) {
+      const actual = {};
+      for (const key of Object.keys(changes)) {
+        if (this.params[key] === changes[key]) continue;
+        this.params[key] = changes[key];
+        actual[key] = changes[key];
+      }
+      if (Object.keys(actual).length) this.parameterChanges.push({tick: this.tick + 1, values: actual});
+    }
+
+    step() {
+      this.tick++;
+      this.entropy(this.tickSalt);
+      this.random.reseed(this.globalSeed, this.tickSalt);
+      this.stats = tickStats();
+      for (const cell of this.cells) cell.feeders.length = 0;
+
+      // 1. Sudden death.
+      const feeding = [];
+      for (const entity of this.entities) {
+        if (this.params.suddenDeath > 0 && this.random.unit() < this.params.suddenDeath) {
+          this.stats.suddenDeaths++;
+          this.cells[entity.cell].released += entity.mass;
+        } else {
+          feeding.push(entity);
+          this.cells[entity.cell].feeders.push(entity);
+        }
+      }
+
+      // 2. Environment. Retain any prior unconsumed food.
+      for (const cell of this.cells) {
+        const amount = foodIncome(this.params.foodMean, this.params.foodSD, this.random);
+        cell.food += amount;
+        this.stats.foodProduced += amount;
+      }
+
+      // 3. Simultaneous feeding. 4. Persistence.
+      const wastePerFood = this.params.energyPerFood / this.params.energyWasteRatio;
+      for (const cell of this.cells) {
+        this.stats.foodConsumed += feedCell(cell, this.params, wastePerFood);
+      }
+      this.entities = [];
+      for (const entity of feeding) {
+        const cost = this.params.persistence * entity.mass;
+        if (entity.energy < cost) {
+          this.stats.persistenceDeaths++;
+          this.cells[entity.cell].released += entity.mass;
+        } else {
+          entity.energy -= cost;
+          this.entities.push(entity);
+        }
+      }
+
+      // 5. Decisions use the same pre-execution state within each entity.
+      const probabilitySums = new Float64Array(ACTIVITIES.length);
+      for (const entity of this.entities) {
+        entity.plan.length = 0;
+        const probabilities = entity.lastDecisionProbabilities ??= new Float64Array(ACTIVITIES.length);
+        for (let activity = 0; activity < ACTIVITIES.length; activity++) {
+          const logit = dotProduct(entity, activity * COEFFICIENTS.length);
+          const rareOdds = Math.exp(-Math.abs(logit));
+          const probability = (logit < 0 ? rareOdds : 1) / (1 + rareOdds);
+          probabilities[activity] = probability;
+          probabilitySums[activity] += probability;
+          if (!chooseActivity(logit, this.random, rareOdds)) continue;
+          entity.plan.push({activity, logit, tie: this.random.unit()});
+          this.stats.activities[activity].selected++;
+        }
+        entity.plan.sort((a, b) => a.logit === b.logit ? a.tie - b.tie : (a.logit > b.logit ? -1 : 1));
+      }
+      const decisionCount = this.entities.length;
+      this.stats.decisionCount = decisionCount;
+      if (decisionCount) {
+        this.stats.meanDecisionProbabilities = Array.from(probabilitySums, sum => sum / decisionCount);
+      }
+
+      // 6. Execute in priority order against the current state.
+      const newborns = [];
+      for (const entity of this.entities) {
+        for (const {activity} of entity.plan) {
+          const stats = this.stats.activities[activity];
+          stats.attempted++;
+          if (!this.execute(activity, entity, newborns)) continue;
+          stats.succeeded++;
+          if (activity === 4) break;
+        }
+      }
+
+      // 7. Finalization. This food and these newborns can participate next tick.
+      for (const entity of newborns) this.entities.push(entity);
+      for (const cell of this.cells) {
+        const amount = cell.released * this.params.foodPerMass;
+        cell.food += amount;
+        this.stats.foodRecycled += amount;
+        cell.released = 0;
+      }
+      for (const key of Object.keys(this.totals)) this.totals[key] += this.stats[key];
+      this.peakPopulation = Math.max(this.peakPopulation, this.entities.length);
+      return this.record();
+    }
+
+    execute(activity, entity, newborns) {
+      const params = this.params;
+      switch (activity) {
+        case 0: {
+          const affordable = params.excretionCost === 0 ? Infinity : entity.energy / params.excretionCost;
+          const amount = Math.min(entity.waste, affordable, entity.surface * params.excretionRate);
+          if (amount <= 0) return false;
+          entity.energy = Math.max(0, entity.energy - amount * params.excretionCost);
+          entity.waste -= amount;
+          return true;
+        }
+        case 1: {
+          const added = entity.mass * params.growthFraction;
+          const mass = entity.mass + added;
+          const cost = added * params.foodPerMass * params.energyPerFood * (1 + params.growthSpread);
+          if (mass === entity.mass || entity.energy < cost) return false;
+          if (!Number.isFinite(mass)) throw new RangeError("A simulated mass exceeded the browser’s numerical range.");
+          entity.energy -= cost;
+          entity.mass = mass;
+          entity.surface = circumference(entity.mass);
+          return true;
+        }
+        case 2: {
+          const removed = entity.mass * params.shrinkFraction;
+          const mass = entity.mass - removed;
+          const gainedEnergy = removed * params.foodPerMass * params.energyPerFood;
+          const energy = entity.energy + gainedEnergy;
+          const waste = entity.waste + gainedEnergy / params.energyWasteRatio;
+          if (mass === entity.mass || mass < this.minMass
+            || !fits(energy, mass * params.energyCapacity) || !fits(waste, mass * params.wasteCapacity)) return false;
+          entity.mass = mass;
+          entity.surface = circumference(mass);
+          entity.energy = energy;
+          entity.waste = waste;
+          return true;
+        }
+        case 3: {
+          const cost = entity.mass * params.movementCost;
+          const neighbors = this.cells[entity.cell].neighbors;
+          if (!neighbors.length || entity.energy < cost) return false;
+          entity.cell = neighbors[Math.floor(this.random.unit() * neighbors.length)];
+          entity.energy -= cost;
+          return true;
+        }
+        case 4:
+          return this.reproduce(entity, newborns);
+        default:
+          throw new RangeError("Unknown activity");
+      }
+    }
+
+    reproduce(entity, newborns) {
+      const params = this.params;
+      if (entity.energy < params.reproductionCost) return false;
+      const lost = entity.mass * params.divisionLoss;
+      const mass = entity.mass - lost;
+      const energy = entity.energy - params.reproductionCost;
+      const childMass = mass * params.offspringShare;
+      const childEnergy = energy * params.offspringShare;
+      const childWaste = entity.waste * params.offspringShare;
+      const parentMass = mass - childMass;
+      const parentEnergy = energy - childEnergy;
+      const parentWaste = entity.waste - childWaste;
+      if (childMass < this.minMass || parentMass < this.minMass
+        || !fits(childEnergy, childMass * params.energyCapacity)
+        || !fits(parentEnergy, parentMass * params.energyCapacity)
+        || !fits(childWaste, childMass * params.wasteCapacity)
+        || !fits(parentWaste, parentMass * params.wasteCapacity)) return false;
+
+      const original = entity.genes;
+      const childGenes = this.inherit(original);
+      if (params.mutateParent) entity.genes = this.inherit(original);
+      entity.mass = parentMass;
+      entity.surface = circumference(parentMass);
+      entity.energy = parentEnergy;
+      entity.waste = parentWaste;
+      newborns.push(this.makeEntity(entity.cell, childMass, childEnergy, childWaste, childGenes, entity));
+      this.cells[entity.cell].released += lost;
+      this.stats.births++;
+      return true;
+    }
+
+    inherit(original) {
+      const genes = original.slice();
+      if (this.params.mutationRate === 0 || this.params.mutationWidth === 0) return genes;
+      for (let i = 0; i < genes.length; i++) {
+        if (this.random.unit() >= this.params.mutationRate) continue;
+        const mutated = mutateValue(genes[i], this.params, this.random);
+        if (mutated !== genes[i]) this.stats.mutations++;
+        genes[i] = mutated;
+      }
+      return genes;
+    }
+
+    record() {
+      const population = this.entities.length;
+      const geneLength = ACTIVITIES.length * COEFFICIENTS.length;
+      const genes = Array.from({length: geneLength}, () => [0, 0, Infinity, -Infinity]);
+      const scales = new Float64Array(geneLength);
+      let energy = 0;
+      let waste = 0;
+      let mass = 0;
+      let count = 0;
+      let generation = 0;
+      for (const entity of this.entities) {
+        count++;
+        energy += entity.energy;
+        waste += entity.waste;
+        mass += entity.mass;
+        generation = Math.max(generation, entity.generation);
+        for (let i = 0; i < geneLength; i++) {
+          const value = entity.genes[i];
+          const distribution = genes[i];
+          const magnitude = Math.abs(value);
+          if (magnitude > scales[i]) {
+            const ratio = scales[i] / magnitude;
+            distribution[0] *= ratio;
+            distribution[1] *= ratio * ratio;
+            scales[i] = magnitude;
+          }
+          const normalized = scales[i] ? value / scales[i] : 0;
+          const delta = normalized - distribution[0];
+          distribution[0] += delta / count;
+          distribution[1] += delta * (normalized - distribution[0]);
+          distribution[2] = Math.min(distribution[2], value);
+          distribution[3] = Math.max(distribution[3], value);
+        }
+      }
+      for (let i = 0; i < geneLength; i++) {
+        const distribution = genes[i];
+        if (population) {
+          distribution[0] *= scales[i];
+          distribution[1] = Math.sqrt(Math.min(1, Math.max(0, distribution[1]) / population)) * scales[i];
+        } else {
+          distribution.fill(null);
+        }
+      }
+      const food = this.cells.reduce((total, cell) => total + cell.food, 0);
+      const energyCapacity = mass * this.params.energyCapacity;
+      const wasteCapacity = mass * this.params.wasteCapacity;
+      if (![mass, energy, waste, food, energyCapacity, wasteCapacity].every(Number.isFinite)) {
+        throw new RangeError("A simulated stock exceeded the browser’s numerical range.");
+      }
+
+      const result = {
+        tick: this.tick, population, food, mass, energy, waste, generation, genes,
+        energyCapacity, wasteCapacity,
+        peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
+      };
+      this.history.push(result);
+      return result;
+    }
+
+    inspect(cell, entityId) {
+      const occupants = this.entities.filter(entity => entity.cell === cell);
+      const selected = occupants.find(entity => entity.id === entityId) ?? occupants[0];
+      return {
+        cell, food: this.cells[cell]?.food, ids: occupants.map(entity => entity.id),
+        entity: selected ? entityState(selected) : null,
+      };
+    }
+
+    snapshot(cell, entityId) {
+      const counts = new Uint32Array(this.cells.length);
+      for (const entity of this.entities) counts[entity.cell]++;
+      return {
+        tick: this.tick,
+        cells: this.cells.map(({q, r, food}, index) => ({q, r, food, population: counts[index]})),
+        inspect: this.inspect(cell, entityId),
+      };
+    }
+
+    exportResults() {
+      return {
+        model: "Petri Dish", version: "0.1", tick: this.tick, minimumMass: this.minMass,
+        setup: this.setup, initialParameters: this.initialParams, appliedParameters: this.params,
+        parameterChanges: this.parameterChanges, activityOrder: ACTIVITIES, coefficientOrder: COEFFICIENTS,
+        coefficientStatistics: ["mean", "populationStandardDeviation", "minimum", "maximum"],
+        history: this.history, entities: this.entities.map(entityState),
+        cells: this.cells.map(({q, r, food}) => ({q, r, food})),
+      };
+    }
+  }
+
+  return {
+    Simulation, ACTIVITIES, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
+    Random, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
+  };
+})();
+
+if (typeof module === "object" && module.exports) module.exports = Petri;
+
+"use strict";
+
+const {Simulation, DEFAULT_PAUSE_TICK} = Petri;
+let simulation;
+let runId = 0;
+let sequence = 0;
+let historyIndex = 0;
+let running = false;
+let pauseAtTick = DEFAULT_PAUSE_TICK;
+let failure = false;
+let timer = null;
+let waitingForFrame = 0;
+let speed = 0;
+let refresh = 500;
+let nextTick = 0;
+let lastFrame = 0;
+let pending = {};
+let watch = {cell: 45, entityId: null, token: 0};
+
+function publish({debug = false, replaceHistory = false} = {}) {
+  if (replaceHistory) historyIndex = 0;
+  const frame = ++sequence;
+  const snapshot = simulation.snapshot(watch.cell, watch.entityId);
+  const records = simulation.history.slice(historyIndex);
+  historyIndex = simulation.history.length;
+  lastFrame = performance.now();
+  if (debug) waitingForFrame = frame;
+  postMessage({
+    type: "frame", runId, frame, debug, replaceHistory, records, snapshot,
+    watchToken: watch.token, params: simulation.params, minimumMass: simulation.minMass,
+    summary: simulation.history.at(-1),
+  });
+}
+
+function status(reason) {
+  postMessage({type: "status", runId, running, tick: simulation?.tick ?? 0, reason});
+}
+
+function stop() {
+  clearTimeout(timer);
+  timer = null;
+  running = false;
+  waitingForFrame = 0;
+}
+
+function schedule(delay) {
+  if (!running || waitingForFrame || timer !== null) return;
+  timer = setTimeout(pump, delay);
+}
+
+function advance() {
+  if (Object.keys(pending).length) {
+    simulation.applyParameters(pending);
+    pending = {};
+    postMessage({type: "applied", runId, params: simulation.params});
+  }
+  simulation.step();
+  if (pauseAtTick > 0 && simulation.tick === pauseAtTick) {
+    stop();
+    return true;
+  }
+  return false;
+}
+
+function reportFailure(error) {
+  stop();
+  failure = true;
+  status("error");
+  postMessage({type: "failure", runId, message: error.message});
+}
+
+function pump() {
+  timer = null;
+  if (!running || waitingForFrame) return;
+  try {
+    const begun = performance.now();
+    const period = speed ? 1000 / speed : 0;
+    let advanced = false;
+    let checkpoint = false;
+    while (performance.now() >= nextTick) {
+      checkpoint = advance();
+      advanced = true;
+      nextTick = period ? Math.max(nextTick + period, performance.now() - 100) : 0;
+      if (checkpoint || refresh === 0 || performance.now() - begun >= 9) break;
+    }
+    if (checkpoint) {
+      publish();
+      status("checkpoint");
+      return;
+    }
+    const now = performance.now();
+    if (refresh === 0 && advanced) publish({debug: true});
+    if (refresh > 0 && now - lastFrame >= refresh) publish();
+    const untilTick = Math.max(0, nextTick - now);
+    const untilView = refresh ? Math.max(0, lastFrame + refresh - now) : Infinity;
+    schedule(Math.min(untilTick, untilView));
+  } catch (error) {
+    reportFailure(error);
+  }
+}
+
+self.onmessage = ({data}) => {
+  try {
+    if (data.type === "reset") {
+      stop();
+      runId = data.runId;
+      pauseAtTick = data.pauseAtTick ?? DEFAULT_PAUSE_TICK;
+      failure = false;
+      pending = {};
+      watch = data.watch;
+      speed = data.speed;
+      refresh = data.refresh;
+      simulation = new Simulation({setup: data.setup, params: data.params});
+      publish({replaceHistory: true});
+      status("ready");
+      return;
+    }
+    if (data.runId !== runId || !simulation) return;
+    switch (data.type) {
+      case "setup":
+        if (!running && !simulation.tick && !failure) {
+          watch = data.watch;
+          simulation = new Simulation({
+            setup: data.setup, params: simulation.params, seed: simulation.globalSeed,
+          });
+          publish({replaceHistory: true});
+        }
+        break;
+      case "tune":
+        if (!running && !simulation.tick && !failure) {
+          simulation = new Simulation({
+            setup: data.setup ?? simulation.setup, params: {...simulation.params, ...data.values}, seed: simulation.globalSeed,
+          });
+          publish({replaceHistory: true});
+        } else {
+          Object.assign(pending, data.values);
+        }
+        break;
+      case "display":
+        speed = data.speed;
+        refresh = data.refresh;
+        if (running) {
+          clearTimeout(timer);
+          timer = null;
+          if (refresh > 0) waitingForFrame = 0;
+          nextTick = performance.now();
+          lastFrame = nextTick;
+          schedule(0);
+        }
+        break;
+      case "pause-at-tick":
+        pauseAtTick = data.tick;
+        break;
+      case "start":
+        if (!running && !failure) {
+          running = true;
+          nextTick = performance.now();
+          status("running");
+          schedule(0);
+        }
+        break;
+      case "pause":
+        if (running) {
+          stop();
+          publish();
+          status("paused");
+        }
+        break;
+      case "step":
+        if (!running && !failure) {
+          const checkpoint = advance();
+          publish();
+          status(checkpoint ? "checkpoint" : "paused");
+        }
+        break;
+      case "painted":
+        if (waitingForFrame === data.frame) {
+          waitingForFrame = 0;
+          schedule(Math.max(0, nextTick - performance.now()));
+        }
+        break;
+      case "inspect":
+        watch = data.watch;
+        postMessage({
+          type: "inspector", runId, watchToken: watch.token, tick: simulation.tick,
+          inspector: simulation.inspect(watch.cell, watch.entityId),
+        });
+        break;
+      case "export": {
+        const blob = new Blob([JSON.stringify(simulation.exportResults())], {type: "application/json"});
+        postMessage({type: "export", blob, tick: simulation.tick, runId});
+        break;
+      }
+    }
+  } catch (error) {
+    reportFailure(error);
+  }
+};
+</script>
+  <script>const CONFIG = {"ACTIVITIES":["Excretion","Growth","Shrinking","Movement","Reproduction"],"COEFFICIENTS":["Bias","Mass","Energy","Waste"],"DEFAULT_SETUP":{"radius":5,"founders":30,"initialMass":10,"initialEnergy":40,"initialWaste":0,"initialFood":0,"biasLow":-3,"biasHigh":-1.5,"weightRange":0.01},"DEFAULT_PARAMS":{"foodMean":3,"foodSD":1.5,"intake":0.35,"energyPerFood":1,"energyWasteRatio":2,"foodPerMass":1,"energyCapacity":8,"wasteCapacity":4,"persistence":0.15,"excretionRate":1.2,"excretionCost":0.05,"growthFraction":0.1,"shrinkFraction":0.1,"growthSpread":0.2,"movementCost":0.02,"reproductionCost":2,"divisionLoss":0.1,"offspringShare":0.5,"suddenDeath":0.002,"mutationRate":0.01,"mutationWidth":0.2,"mutationSharpness":16,"mutationTail":3,"mutateParent":false},"DEFAULT_PAUSE_TICK":0};
+"use strict";
+
+const {ACTIVITIES, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
+const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
+const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
+const CHART_WINDOW = 5000;
+const MODEL_PRESETS = {
+  default: DEFAULT_PARAMS,
+  "scarce-food": {...DEFAULT_PARAMS, foodMean: 1.5, foodSD: 8},
+};
+const $ = id => document.getElementById(id);
+const all = selector => Array.from(document.querySelectorAll(selector));
+const write = (id, value) => { $(id).textContent = value; };
+const int = new Intl.NumberFormat("en", {maximumFractionDigits: 0});
+const dec = new Intl.NumberFormat("en", {maximumFractionDigits: 2});
+const percent = new Intl.NumberFormat("en", {style: "percent", maximumFractionDigits: 2});
+const compact = new Intl.NumberFormat("en", {notation: "compact", maximumFractionDigits: 1});
+const exact = value => value === 0 ? "0" : value.toPrecision(3);
+const controls = new Map();
+
+const GROUPS = [
+  ["Environment", true, [
+    ["foodMean", "Food income", "F/hex", 0, 12, 0.1],
+    ["foodSD", "Food deviation", "F/hex", 0, 8, 0.05],
+    ["suddenDeath", "Sudden death", "%/tick", 0, 5, 0.01, {scale: 100, max: 100}],
+  ]],
+  ["Metabolism", false, [
+    ["intake", "Food intake", "F/S", 0, 2, 0.01],
+    ["energyPerFood", "Energy per food", "E/F", 0.01, 6, 0.01, {min: 0.000001}],
+    ["energyWasteRatio", "Energy-to-waste ratio", "E/W", 0.01, 10, 0.05, {min: 0.000001}],
+    ["foodPerMass", "Food per mass", "F/M", 0, 6, 0.05],
+    ["energyCapacity", "Energy capacity", "E/M", 0, 16, 0.1],
+    ["wasteCapacity", "Waste capacity", "W/M", 0, 10, 0.1],
+    ["persistence", "Persistence cost", "E/M", 0, 1, 0.005],
+    ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
+    ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
+  ]],
+  ["Growth, movement & division", false, [
+    ["growthFraction", "Mass growth", "%", 0, 100, 1, {scale: 100, max: 100}],
+    ["shrinkFraction", "Mass shrinking", "%", 0, 100, 1, {scale: 100, max: 100}],
+    ["growthSpread", "Growth spread", "%", 0, 100, 1, {scale: 100}],
+    ["movementCost", "Movement cost", "E/M", 0, 0.5, 0.005],
+    ["reproductionCost", "Reproduction cost", "E", 0, 12, 0.1],
+    ["divisionLoss", "Division mass loss", "%", 0, 100, 1, {scale: 100, max: 100}],
+    ["offspringShare", "Offspring share", "%", 1, 99, 1, {scale: 100, min: 0.01, max: 99.99}],
+  ]],
+  ["Inheritance", false, [
+    ["mutationRate", "Mutation chance", "%", 0, 20, 0.1, {scale: 100, max: 100}],
+    ["mutationWidth", "Peak width", "", 0, 1, 0.01],
+    ["mutationSharpness", "Edge sharpness", "", 0.1, 32, 0.1, {max: 1000}],
+    ["mutationTail", "Tail exponent", "", 1.01, 10, 0.01, {max: 1000}],
+    ["mutateParent", "Mutate original pattern", "toggle"],
+  ]],
+];
+
+const SETUP_KNOBS = [
+  ["radius", "Dish radius", "hexes", 0, 30, 1, {max: 30, integral: true}],
+  ["founders", "Founders", "", 0, 91, 1, {max: 91, integral: true}],
+  ["initialMass", "Founder mass", "M", 0.01, 40, 0.01, {min: 0.000001}],
+  ["initialEnergy", "Founder energy", "E", 0, 80, 1],
+  ["initialWaste", "Founder waste", "W", 0, 40, 1],
+  ["initialFood", "Starting food", "F/hex", 0, 20, 0.25],
+  ["biasLow", "Bias lower bound", "", -12, 12, 0.1, {min: -1000000}],
+  ["biasHigh", "Bias upper bound", "", -12, 12, 0.1, {min: -1000000}],
+  ["weightRange", "Weight range ±", "", 0, 0.1, 0.001],
+];
+
+let worker;
+let runId = 0;
+let ready = false;
+let running = false;
+let commandPending = false;
+let setupLocked = false;
+let failed = false;
+let checkpoint = false;
+let pauseAtTick = DEFAULT_PAUSE_TICK;
+let setup = {...DEFAULT_SETUP};
+let params = {...DEFAULT_PARAMS};
+let appliedParams = {};
+let snapshot = null;
+let history = [];
+let lastFrame = 0;
+let watch = {cell: 45, entityId: null, token: 0};
+let hoverCell = -1;
+let hexPositions = [];
+let hexSize = 0;
+let inspector = null;
+let inspectedAt = 0;
+let chart = "genetics";
+let occupantOptions = "";
+let lastLegend = "";
+
+function post(type, details = {}) {
+  if (worker) worker.postMessage({type, runId, ...details});
+}
+
+function rangeFill(input) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  input.style.setProperty("--fill", ((input.valueAsNumber - min) / (max - min) * 100 || 0) + "%");
+}
+
+function makeKnob(spec, values, kind) {
+  const [key, name, unit, sliderMin, sliderMax, step, options = {}] = spec;
+  const {scale = 1, min = sliderMin, max = 1000000, integral = false} = options;
+  const id = "param-" + key;
+  const el = document.createElement("div");
+  if (unit === "toggle") {
+    el.innerHTML = '<label class="knob-check"><input type="checkbox"> <span></span></label>';
+    const checkbox = el.querySelector("input");
+    checkbox.id = id;
+    checkbox.checked = values[key];
+    el.querySelector("span").textContent = name;
+    checkbox.addEventListener("change", () => setParameter(key, checkbox.checked, kind));
+    controls.set(key, {sync: value => { checkbox.checked = value; }});
+  } else {
+    el.className = "knob";
+    el.innerHTML = '<label><span></span><small class="unit"></small></label><input type="number"><input type="range">';
+    const [number, range] = el.querySelectorAll("input");
+    const label = el.querySelector("label");
+    label.htmlFor = id;
+    label.querySelector("span").textContent = name;
+    label.querySelector("small").textContent = unit;
+    if (!unit) label.querySelector("small").hidden = true;
+    number.id = id;
+    number.setAttribute("aria-label", unit ? name + " (" + unit + ")" : name);
+    number.step = integral ? "1" : "any";
+    number.min = min;
+    number.max = max;
+    range.min = sliderMin;
+    range.max = sliderMax;
+    range.step = step;
+    range.setAttribute("aria-label", name + " slider");
+    const sync = value => {
+      number.value = String(Number((value * scale).toPrecision(12)));
+      range.value = number.value;
+      rangeFill(range);
+    };
+    range.addEventListener("input", () => setParameter(key, range.valueAsNumber / scale, kind));
+    const commit = () => {
+      if (!Number.isFinite(number.valueAsNumber)) {
+        sync(valuesFor(kind)[key]);
+        return;
+      }
+      let value = Math.max(Number(number.min), Math.min(Number(number.max), number.valueAsNumber));
+      if (integral) value = Math.round(value);
+      if ((key === "foodMean" || key === "foodSD") && value > 0) value = Math.max(value, 0.000001);
+      if (value / scale === valuesFor(kind)[key]) sync(valuesFor(kind)[key]);
+      else setParameter(key, value / scale, kind);
+    };
+    number.addEventListener("change", commit);
+    number.addEventListener("blur", commit);
+    number.addEventListener("keydown", event => { if (event.key === "Enter") commit(); });
+    controls.set(key, {sync, number, range});
+    sync(values[key]);
+  }
+  return el;
+}
+
+function valuesFor(kind) {
+  return kind === "setup" ? setup : params;
+}
+
+function hexCount(radius) {
+  return 1 + 3 * radius * (radius + 1);
+}
+
+function normalizeSetup() {
+  const founders = controls.get("founders");
+  const max = hexCount(setup.radius);
+  founders.number.max = max;
+  founders.range.max = Math.max(1, max);
+  setup.founders = Math.min(setup.founders, max);
+  const energy = controls.get("initialEnergy");
+  const waste = controls.get("initialWaste");
+  energy.number.max = Math.min(1000000, setup.initialMass * params.energyCapacity);
+  waste.number.max = Math.min(1000000, setup.initialMass * params.wasteCapacity);
+  energy.range.max = Math.max(1, Math.min(80, Number(energy.number.max)));
+  waste.range.max = Math.max(1, Math.min(40, Number(waste.number.max)));
+  setup.initialEnergy = Math.min(setup.initialEnergy, Number(energy.number.max));
+  setup.initialWaste = Math.min(setup.initialWaste, Number(waste.number.max));
+  founders.sync(setup.founders);
+  energy.sync(setup.initialEnergy);
+  waste.sync(setup.initialWaste);
+  write("setup-minimum", dec.format(setup.initialMass * 0.01));
+  if (setup.initialMass * 0.01 < 0.01) write("setup-minimum", exact(setup.initialMass * 0.01));
+}
+
+function setParameter(key, value, kind) {
+  if (kind !== "setup") {
+    setLiveParameters({[key]: value});
+    return;
+  }
+  if (setupLocked) return;
+  if (key === "initialEnergy" || key === "initialWaste" || key === "founders") {
+    value = Math.min(value, Number(controls.get(key).number.max));
+  }
+  setup[key] = value;
+  controls.get(key).sync(value);
+  if (setup.biasLow > setup.biasHigh) {
+    const other = key === "biasLow" ? "biasHigh" : "biasLow";
+    setup[other] = value;
+    controls.get(other).sync(value);
+  }
+  normalizeSetup();
+  if (key === "radius") chooseCenter();
+  post("setup", {setup, watch});
+}
+
+function setLiveParameters(values) {
+  const changes = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (params[key] === value) continue;
+    params[key] = value;
+    controls.get(key).sync(value);
+    changes[key] = value;
+  }
+  if (!Object.keys(changes).length) return;
+  if (!setupLocked && ("energyCapacity" in changes || "wasteCapacity" in changes)) {
+    normalizeSetup();
+    post("tune", {values: changes, setup});
+  } else {
+    post("tune", {values: changes});
+  }
+  const selected = Object.keys(MODEL_PRESETS).find(name =>
+    Object.entries(MODEL_PRESETS[name]).every(([key, value]) => params[key] === value)
+  );
+  $("model-preset").value = selected ?? "";
+  showPending();
+}
+
+function showPending() {
+  $("pending-note").hidden = !setupLocked || Object.keys(params).every(key => params[key] === appliedParams[key]);
+}
+
+function mountControls() {
+  for (const [name, open, knobs] of GROUPS) {
+    const detail = document.createElement("details");
+    detail.className = "parameter-group";
+    detail.open = open;
+    const summary = document.createElement("summary");
+    summary.textContent = name;
+    const content = document.createElement("div");
+    content.className = "knobs";
+    for (const knob of knobs) content.append(makeKnob(knob, params, "live"));
+    detail.append(summary, content);
+    $("runtime-controls").append(detail);
+  }
+  $("setup-controls").className = "knobs";
+  for (const knob of SETUP_KNOBS) $("setup-controls").append(makeKnob(knob, setup, "setup"));
+  const min = document.createElement("div");
+  min.className = "derived";
+  min.innerHTML = '<span>Minimum mass</span><output id="setup-minimum"></output>';
+  $("setup-controls").append(min);
+  normalizeSetup();
+
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    const el = document.createElement("div");
+    el.className = "activity-row";
+    el.innerHTML = '<span></span><span class="value"></span><span class="value"></span><span class="value success"></span>';
+    const [name, selected, attempted, done] = el.children;
+    name.textContent = ACTIVITIES[i];
+    selected.id = "activity-selected-" + i;
+    attempted.id = "activity-attempted-" + i;
+    done.id = "activity-done-" + i;
+    $("activity-list").append(el);
+    for (let j = 0; j < COEFFICIENTS.length; j++) {
+      const option = new Option(ACTIVITIES[i] + " · " + COEFFICIENTS[j], i * COEFFICIENTS.length + j);
+      $("gene-select").add(option);
+    }
+  }
+  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages");
+  mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients");
+}
+
+function mountActivityTable(id, columns, name) {
+  const table = document.createElement("table");
+  table.className = "coefficient-table";
+  table.setAttribute("aria-label", name);
+  const head = table.createTHead().insertRow();
+  for (const label of ["Activity", ...columns]) {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = label;
+    head.append(th);
+  }
+  const body = table.createTBody();
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    const row = body.insertRow();
+    const th = document.createElement("th");
+    th.scope = "row";
+    th.textContent = ACTIVITIES[i];
+    row.append(th);
+    for (let j = 0; j < columns.length; j++) {
+      const cell = row.insertCell();
+      cell.id = id + "-" + i + "-" + j;
+      cell.textContent = "—";
+    }
+  }
+  $(id).append(table);
+}
+
+function formatProbability(value) {
+  if (value === null) return "—";
+  if (value < 0.0001) return "<0.01%";
+  if (value > 0.9999) return ">99.99%";
+  return percent.format(value);
+}
+
+function chooseCenter() {
+  watch = {cell: (hexCount(setup.radius) - 1) / 2, entityId: null, token: watch.token + 1};
+  inspector = null;
+  hoverCell = -1;
+}
+
+function newRun() {
+  runId++;
+  lastFrame = 0;
+  ready = false;
+  running = false;
+  failed = false;
+  checkpoint = false;
+  commandPending = false;
+  snapshot = null;
+  history = [];
+  normalizeSetup();
+  chooseCenter();
+  renderStatus("loading", 0);
+  post("reset", {setup, params, watch, speed: speedValue(), refresh: refreshValue(), pauseAtTick});
+}
+
+function renderStatus(reason, tick) {
+  ready = reason !== "loading";
+  checkpoint = reason === "checkpoint";
+  failed = reason === "error";
+  running = reason === "running";
+  setupLocked = running || tick > 0 || failed || reason === "loading";
+  const active = $("run-status");
+  active.className = "status " + reason;
+  active.lastElementChild.textContent = {
+    ready: "Ready", paused: "Paused", running: "Running",
+    checkpoint: "Checkpoint", error: "Stopped", loading: "Loading",
+  }[reason];
+  $("play").disabled = !ready || failed || commandPending;
+  $("step").disabled = !ready || running || failed || commandPending;
+  $("restart").disabled = !ready;
+  $("export").disabled = !ready || failed;
+  $("play").lastElementChild.textContent = running ? "Pause" : tick > 0 ? "Resume" : "Start";
+  $("play").firstElementChild.className = "icon " + (running ? "icon-pause" : "icon-play");
+  $("setup-fields").disabled = setupLocked;
+  write("setup-state", setupLocked ? "Locked until restart" : "New run");
+  const notice = $("run-notice");
+  notice.hidden = !checkpoint && !failed;
+  notice.classList.toggle("error", failed);
+  if (checkpoint) notice.textContent = "Paused at tick " + int.format(tick) + ". Resume to continue.";
+  showPending();
+}
+
+function speedValue() { return SPEEDS[$("speed").valueAsNumber]; }
+function refreshValue() { return REFRESHES[$("refresh").valueAsNumber]; }
+
+function updateTiming() {
+  rangeFill($("speed"));
+  rangeFill($("refresh"));
+  write("speed-value", speedValue() ? int.format(speedValue()) + " ticks/s" : "Max");
+  write("refresh-value", refreshValue() ? dec.format(refreshValue() / 1000) + " s" : "Every tick");
+  $("speed").setAttribute("aria-valuetext", $("speed-value").textContent);
+  $("refresh").setAttribute("aria-valuetext", $("refresh-value").textContent);
+  post("display", {speed: speedValue(), refresh: refreshValue()});
+}
+
+function presentFrame(data) {
+  if (data.runId !== runId || data.frame < lastFrame) return;
+  lastFrame = data.frame;
+  snapshot = data.snapshot;
+  appliedParams = data.params;
+  if (data.watchToken === watch.token) {
+    inspector = snapshot.inspect;
+    inspectedAt = snapshot.tick;
+  }
+  renderGauges(data.summary, data.minimumMass);
+  renderPopulationGenetics(data.summary);
+  renderDish();
+  renderInspector();
+  renderHistory();
+  showPending();
+}
+
+function receive({data}) {
+  if (data.runId !== runId) return;
+  switch (data.type) {
+    case "status":
+      commandPending = false;
+      renderStatus(data.reason, data.tick);
+      break;
+    case "frame":
+      if (data.replaceHistory) {
+        history = [];
+      }
+      for (const record of data.records) {
+        history.push({
+          tick: record.tick, population: record.population, food: record.food, energy: record.energy,
+          waste: record.waste, genes: record.genes.map(([mean, sd]) => [mean, sd]),
+        });
+      }
+      if (history.length > CHART_WINDOW) history.splice(0, history.length - CHART_WINDOW);
+      if (data.debug && document.visibilityState === "visible") {
+        requestAnimationFrame(() => {
+          presentFrame(data);
+          requestAnimationFrame(() => {
+            if (data.runId === runId) post("painted", {frame: data.frame});
+          });
+        });
+      } else {
+        presentFrame(data);
+        if (data.debug) post("painted", {frame: data.frame});
+      }
+      break;
+    case "applied":
+      appliedParams = data.params;
+      showPending();
+      break;
+    case "inspector":
+      if (data.watchToken !== watch.token) break;
+      inspector = data.inspector;
+      inspectedAt = data.tick;
+      renderInspector();
+      break;
+    case "export":
+      download(data.blob, "petri-dish-tick-" + data.tick + ".json");
+      $("export").disabled = false;
+      break;
+    case "failure":
+      $("run-notice").textContent = data.message + " Restart to begin a new run.";
+      break;
+  }
+}
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function renderGauges(summary, minimum) {
+  const deathTotal = summary.totals.suddenDeaths + summary.totals.persistenceDeaths;
+  const deathsNow = summary.suddenDeaths + summary.persistenceDeaths;
+  write("tick", String(summary.tick).padStart(4, "0"));
+  write("m-pop", int.format(summary.population));
+  write("m-peak", "Peak " + int.format(summary.peakPopulation));
+  write("m-food", dec.format(summary.food));
+  write("m-food-in", dec.format(summary.food / snapshot.cells.length) + " F per hex");
+  write("m-mass", summary.population ? dec.format(summary.mass / summary.population) : "—");
+  write("m-min", "Minimum " + (minimum >= 0.01 ? dec.format(minimum) : exact(minimum)));
+  write("m-balance", int.format(summary.totals.births) + " / " + int.format(deathTotal));
+  write("m-balance-tick", "This tick " + int.format(summary.births) + " / " + int.format(deathsNow));
+  write("dish-caption", int.format(snapshot.cells.length) + " hexes · Radius " + snapshot.cells.at(-1).r);
+  for (const kind of ["energy", "waste"]) {
+    const capacity = summary[kind + "Capacity"];
+    const used = summary[kind];
+    write(kind + "-value", dec.format(used) + " / " + dec.format(capacity));
+    $(kind + "-bar").style.width = (capacity ? Math.min(100, used / capacity * 100) : used > 0 ? 100 : 0) + "%";
+  }
+  write("food-produced", dec.format(summary.foodProduced));
+  write("food-eaten", dec.format(summary.foodConsumed));
+  write("food-recycled", dec.format(summary.foodRecycled));
+  write("mass-total", dec.format(summary.mass));
+  write("deaths-sudden", int.format(summary.totals.suddenDeaths));
+  write("deaths-persistence", int.format(summary.totals.persistenceDeaths));
+  write("mutations", int.format(summary.totals.mutations));
+  write("generation", summary.population ? int.format(summary.generation) : "—");
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    const stats = summary.activities[i];
+    write("activity-selected-" + i, int.format(stats.selected));
+    write("activity-attempted-" + i, int.format(stats.attempted));
+    write("activity-done-" + i, int.format(stats.succeeded));
+  }
+}
+
+function renderPopulationGenetics(summary) {
+  write("population-decision-count", summary.decisionCount
+    ? int.format(summary.decisionCount) + (summary.decisionCount === 1 ? " entity decided" : " entities decided")
+    : "No decisions this tick");
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    for (let j = 0; j < COEFFICIENTS.length; j++) {
+      const [mean] = summary.genes[i * COEFFICIENTS.length + j];
+      write("population-genes-table-" + i + "-" + j, mean === null ? "—" : exact(mean));
+    }
+    write("population-genes-table-" + i + "-" + COEFFICIENTS.length,
+      formatProbability(summary.meanDecisionProbabilities[i]));
+  }
+}
+
+function canvasContext(canvas) {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (width === 0 || height === 0) return null;
+  const density = Math.min(2, window.devicePixelRatio || 1);
+  const pixelsWide = Math.ceil(width * density);
+  const pixelsHigh = Math.ceil(height * density);
+  if (canvas.width !== pixelsWide || canvas.height !== pixelsHigh) {
+    canvas.width = pixelsWide;
+    canvas.height = pixelsHigh;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(density, 0, 0, density, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  return {ctx, width, height};
+}
+
+function hexPath(ctx, x, y, radius) {
+  const side = Math.sqrt(3) * radius / 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y - radius);
+  ctx.lineTo(x + side, y - radius / 2);
+  ctx.lineTo(x + side, y + radius / 2);
+  ctx.lineTo(x, y + radius);
+  ctx.lineTo(x - side, y + radius / 2);
+  ctx.lineTo(x - side, y - radius / 2);
+  ctx.closePath();
+}
+
+function foodColor(score) {
+  const palette = [[37, 45, 31], [99, 105, 57], [190, 132, 62]];
+  const edge = score < 0.5 ? 0 : 1;
+  const fraction = score * 2 - edge;
+  const color = palette[edge].map((start, i) => Math.round(start + fraction * (palette[edge + 1][i] - start)));
+  return "rgb(" + color.join(",") + ")";
+}
+
+function renderDish() {
+  const canvas = $("dish");
+  const context = canvasContext(canvas);
+  if (!context || !snapshot) return;
+  const {ctx, width, height} = context;
+  const cells = snapshot.cells;
+  const radius = cells.at(-1).r;
+  hexSize = Math.min(68, (width - 34) / (Math.sqrt(3) * (2 * radius + 1)), (height - 34) / (3 * radius + 2));
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const highest = cells.reduce((largest, cell) => Math.max(cell.food, largest), 0);
+  const normalizer = Math.log1p(highest) || 1;
+  write("food-scale", highest >= 1000 ? compact.format(highest) : dec.format(highest));
+  ctx.strokeStyle = "#7583602a";
+  ctx.lineWidth = 1;
+  for (const fraction of [0.37, 0.46]) {
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, Math.min(width, height) * fraction, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+
+  hexPositions = cells.map(({q, r}) => [
+    centerX + Math.sqrt(3) * hexSize * (q + r / 2), centerY + 1.5 * hexSize * r,
+  ]);
+  for (let index = 0; index < cells.length; index++) {
+    const cell = cells[index];
+    const [x, y] = hexPositions[index];
+    hexPath(ctx, x, y, hexSize - Math.min(1, hexSize * 0.12));
+    ctx.fillStyle = foodColor(Math.log1p(cell.food) / normalizer);
+    ctx.fill();
+    ctx.lineWidth = hexSize > 9 ? 0.9 : 0.55;
+    ctx.strokeStyle = "#797e535e";
+    ctx.stroke();
+    if (cell.population > 0) drawOccupants(ctx, x, y, cell.population);
+  }
+  for (const [index, color, weight] of [[hoverCell, "#d6cc9a", 1.15], [watch.cell, "#f3c984", 1.8]]) {
+    if (!hexPositions[index]) continue;
+    const [x, y] = hexPositions[index];
+    hexPath(ctx, x, y, hexSize - Math.min(0.6, hexSize * 0.08));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = weight;
+    ctx.stroke();
+  }
+}
+
+function drawOccupants(ctx, x, y, population) {
+  const dot = Math.max(1.15, Math.min(3, hexSize * 0.13));
+  ctx.fillStyle = "#dbedaa";
+  if (population > 4 && hexSize > 13) {
+    ctx.fillStyle = "#131c13d9";
+    ctx.beginPath();
+    ctx.arc(x, y, Math.min(11, hexSize * 0.56), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e1f5b3";
+    ctx.font = "600 " + (hexSize > 17 ? 10 : 8) + "px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(population > 999 ? compact.format(population) : String(population), x, y + 0.4);
+    return;
+  }
+  const dots = Math.min(population, hexSize < 9 ? 1 : 4);
+  for (let i = 0; i < dots; i++) {
+    const angle = (i * Math.PI * 2) / dots - Math.PI / 2;
+    const distance = dots === 1 ? 0 : Math.min(6, hexSize * 0.30);
+    ctx.beginPath();
+    ctx.arc(x + distance * Math.cos(angle), y + distance * Math.sin(angle), dot, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function cellAt(x, y) {
+  const step = Math.sqrt(3);
+  for (let index = 0; index < hexPositions.length; index++) {
+    const dx = Math.abs(x - hexPositions[index][0]);
+    const dy = Math.abs(y - hexPositions[index][1]);
+    if (dx <= hexSize * step / 2 && dy <= hexSize - dx / step) return index;
+  }
+  return -1;
+}
+
+function pointCell(event) {
+  const bounds = $("dish").getBoundingClientRect();
+  return cellAt(event.clientX - bounds.left, event.clientY - bounds.top);
+}
+
+function watchCell(cell, entityId = null) {
+  if (!snapshot?.cells[cell]) return;
+  watch = {cell, entityId, token: watch.token + 1};
+  if (inspector?.cell !== cell) inspector = null;
+  renderDish();
+  renderInspector();
+  post("inspect", {watch});
+}
+
+function keyMove(event) {
+  const offset = {ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]}[event.key];
+  if (!offset || !snapshot?.cells[watch.cell]) return;
+  event.preventDefault();
+  const current = snapshot.cells[watch.cell];
+  const index = snapshot.cells.findIndex(cell => cell.q === current.q + offset[0] && cell.r === current.r + offset[1]);
+  if (index >= 0) watchCell(index);
+}
+
+function renderInspector() {
+  const cell = snapshot?.cells[watch.cell];
+  if (!cell) return;
+  const details = inspector?.cell === watch.cell ? inspector : null;
+  write("hex-address", cell.q + ", " + cell.r);
+  write("hex-count", int.format(details?.ids.length ?? cell.population));
+  write("hex-food", dec.format(details?.food ?? cell.food));
+  const selected = details?.entity;
+  $("entity-details").hidden = !selected;
+  $("empty-hex").hidden = !!selected;
+  $("inspected-tick").hidden = !details || inspectedAt === snapshot.tick;
+  if (!$("inspected-tick").hidden) write("inspected-tick", "Inspected at tick " + int.format(inspectedAt));
+  if (!selected) {
+    write("empty-hex", inspector ? "No entities in this hex." : "Reading hex…");
+    return;
+  }
+  const select = $("entity-select");
+  const ids = inspector.ids.join(",");
+  if (ids !== occupantOptions) {
+    occupantOptions = ids;
+    const options = document.createDocumentFragment();
+    for (const id of inspector.ids) options.append(new Option("Entity " + int.format(id), id));
+    select.replaceChildren(options);
+  }
+  select.value = selected.id;
+  write("entity-mass", dec.format(selected.mass));
+  write("entity-energy", dec.format(selected.energy));
+  write("entity-waste", dec.format(selected.waste));
+  write("entity-origin", "Generation " + int.format(selected.generation) + " · Born at tick " + int.format(selected.born)
+    + (selected.parentId ? " · Parent " + int.format(selected.parentId) : " · Founder"));
+  const probabilities = selected.lastDecisionProbabilities;
+  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions yet");
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    write("entity-genes-table-" + i + "-0", formatProbability(probabilities?.[i] ?? null));
+    for (let j = 0; j < COEFFICIENTS.length; j++) {
+      write("entity-genes-table-" + i + "-" + (j + 1), exact(selected.coefficients[i * COEFFICIENTS.length + j]));
+    }
+  }
+}
+
+function plotRange(series, nonnegative) {
+  let minimum = nonnegative ? 0 : Infinity;
+  let maximum = nonnegative ? 1 : -Infinity;
+  for (const line of series) {
+    for (const value of line.values) {
+      if (!Number.isFinite(value)) continue;
+      minimum = Math.min(minimum, value);
+      maximum = Math.max(maximum, value);
+    }
+  }
+  if (!Number.isFinite(minimum)) return [-1, 1];
+  if (nonnegative) {
+    const perMark = maximum / 4;
+    const order = 10 ** Math.floor(Math.log10(perMark));
+    const step = [1, 2, 2.5, 5, 10].find(candidate => candidate * order >= perMark) * order;
+    return [0, chart === "population" ? Math.max(1, step) * 4 : step * 4];
+  }
+  if (minimum === maximum) {
+    const extra = Math.max(0.01, Math.abs(minimum) * 0.05);
+    return [minimum - extra, maximum + extra];
+  }
+  const padding = (maximum - minimum) * 0.07;
+  return [minimum - padding, maximum + padding];
+}
+
+function axisValue(value) {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1000) return compact.format(value);
+  if (magnitude > 0 && magnitude < 0.01) return value.toExponential(1);
+  return dec.format(value);
+}
+
+function renderHistory() {
+  const context = canvasContext($("history"));
+  if (!context || history.length === 0) return;
+  const {ctx, width, height} = context;
+  const gene = Number($("gene-select").value) || 0;
+  const first = history[0].tick;
+  const last = history.at(-1).tick;
+  let series;
+  let legend;
+  if (chart === "population") {
+    series = [{name: "Population", color: "#ccdfa4", values: history.map(record => record.population)}];
+    legend = series;
+    write("history-caption", "Population by tick");
+  } else if (chart === "resources") {
+    series = [
+      {name: "Food", color: "#eeb463", values: history.map(record => record.food)},
+      {name: "Energy", color: "#ccdfa4", values: history.map(record => record.energy)},
+      {name: "Waste", color: "#bc9ecf", values: history.map(record => record.waste)},
+    ];
+    legend = series;
+    write("history-caption", "Dish-wide stocks by tick");
+  } else {
+    const coefficient = history.map(record => record.genes[gene]);
+    series = [
+      {name: "Mean", color: "#ccdfa4", values: coefficient.map(([mean]) => mean)},
+      {name: "Upper", color: "#8c9c6b", values: coefficient.map(([mean, sd]) => mean === null ? null : mean + sd)},
+      {name: "Lower", color: "#8c9c6b", values: coefficient.map(([mean, sd]) => mean === null ? null : mean - sd)},
+    ];
+    legend = [series[0], {name: "±1 standard deviation", color: "#8c9c6b"}];
+    write("history-caption", "Inherited coefficient by tick");
+  }
+  if (first > 0) $("history-caption").textContent += " · Latest " + int.format(CHART_WINDOW) + " ticks";
+  const lastPoint = series[0].values.at(-1);
+  $("history").setAttribute("aria-label", series[0].name + " from tick " + first + " to " + last
+    + (lastPoint === null ? ". No surviving entities." : ". Latest value " + axisValue(lastPoint) + "."));
+  drawLegend(legend);
+  drawChart(context, series, first, last);
+}
+
+function drawLegend(legend) {
+  const key = legend.map(line => line.name).join(",");
+  if (key === lastLegend) return;
+  lastLegend = key;
+  $("chart-legend").replaceChildren(...legend.map(line => {
+    const node = document.createElement("span");
+    const swatch = document.createElement("i");
+    swatch.style.setProperty("--swatch", line.color);
+    node.append(swatch, line.name);
+    return node;
+  }));
+}
+
+function drawChart({ctx, width, height}, series, first, last) {
+  const [min, max] = plotRange(series, chart !== "genetics");
+  const left = 47;
+  const right = width - 13;
+  const top = 9;
+  const bottom = height - 23;
+  const x = index => left + (right - left) * index / Math.max(1, last - first);
+  const y = value => bottom - (value - min) / (max - min) * (bottom - top);
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#aaa895";
+  ctx.strokeStyle = "#3a3e30";
+  ctx.lineWidth = 1;
+  for (let mark = 0; mark <= 4; mark++) {
+    const value = min + (max - min) * mark / 4;
+    const position = y(value);
+    ctx.fillText(axisValue(value), left - 6, position);
+    ctx.beginPath();
+    ctx.moveTo(left, position);
+    ctx.lineTo(right, position);
+    ctx.stroke();
+  }
+  const labels = last === first ? [first] : [first, Math.round((first + last) / 2), last];
+  for (const label of new Set(labels)) {
+    ctx.textAlign = label === first ? "left" : label === last ? "right" : "center";
+    ctx.fillText(int.format(label), x(label - first), height - 10);
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left - 3, top - 5, right - left + 6, bottom - top + 9);
+  ctx.clip();
+  if (chart === "genetics") {
+    const upper = series[1].values;
+    const lower = series[2].values;
+    const lastValid = upper.findLastIndex(Number.isFinite);
+    const firstValid = upper.findIndex(Number.isFinite);
+    if (lastValid >= 0) {
+      ctx.beginPath();
+      ctx.moveTo(x(firstValid), y(upper[firstValid]));
+      for (let i = firstValid + 1; i <= lastValid; i++) ctx.lineTo(x(i), y(upper[i]));
+      for (let i = lastValid; i >= firstValid; i--) ctx.lineTo(x(i), y(lower[i]));
+      ctx.closePath();
+      ctx.fillStyle = "#b9ce8239";
+      ctx.fill();
+    }
+  }
+  const lines = chart === "genetics" ? series.slice(0, 1) : series;
+  for (const line of lines) {
+    ctx.beginPath();
+    let located = false;
+    let latestIndex = -1;
+    line.values.forEach((value, index) => {
+      if (!Number.isFinite(value)) {
+        located = false;
+        return;
+      }
+      if (located) ctx.lineTo(x(index), y(value));
+      else ctx.moveTo(x(index), y(value));
+      latestIndex = index;
+      located = true;
+    });
+    ctx.strokeStyle = line.color;
+    ctx.lineWidth = 1.7;
+    ctx.stroke();
+    if (latestIndex >= 0) {
+      ctx.beginPath();
+      ctx.arc(x(latestIndex), y(line.values[latestIndex]), 2.7, 0, Math.PI * 2);
+      ctx.fillStyle = line.color;
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function mountEvents() {
+  $("speed").addEventListener("input", updateTiming);
+  $("refresh").addEventListener("input", updateTiming);
+  $("model-preset").addEventListener("change", event => {
+    const preset = MODEL_PRESETS[event.target.value];
+    if (preset) setLiveParameters(preset);
+  });
+  const pauseInput = $("pause-at-tick");
+  pauseInput.value = String(pauseAtTick);
+  const commitPauseTick = () => {
+    const value = pauseInput.valueAsNumber;
+    if (Number.isSafeInteger(value) && value >= 0 && value !== pauseAtTick) {
+      pauseAtTick = value;
+      post("pause-at-tick", {tick: pauseAtTick});
+    }
+    pauseInput.value = String(pauseAtTick);
+  };
+  pauseInput.addEventListener("change", commitPauseTick);
+  pauseInput.addEventListener("blur", commitPauseTick);
+  pauseInput.addEventListener("keydown", event => { if (event.key === "Enter") commitPauseTick(); });
+  $("play").addEventListener("click", () => {
+    commandPending = true;
+    $("play").disabled = true;
+    $("step").disabled = true;
+    $("setup-fields").disabled = true;
+    post(running ? "pause" : "start");
+  });
+  $("step").addEventListener("click", () => {
+    commandPending = true;
+    $("play").disabled = true;
+    $("step").disabled = true;
+    $("setup-fields").disabled = true;
+    post("step");
+  });
+  $("restart").addEventListener("click", newRun);
+  $("export").addEventListener("click", () => {
+    $("export").disabled = true;
+    post("export");
+  });
+  $("dish").addEventListener("click", event => watchCell(pointCell(event)));
+  $("dish").addEventListener("pointermove", event => {
+    if (event.pointerType !== "mouse") return;
+    const next = pointCell(event);
+    if (hoverCell === next) return;
+    hoverCell = next;
+    renderDish();
+  });
+  $("dish").addEventListener("pointerleave", () => {
+    if (hoverCell === -1) return;
+    hoverCell = -1;
+    renderDish();
+  });
+  $("dish").addEventListener("keydown", keyMove);
+  $("entity-select").addEventListener("change", event => watchCell(watch.cell, Number(event.target.value)));
+  $("gene-select").addEventListener("change", renderHistory);
+  for (const button of all("[data-chart]")) {
+    button.addEventListener("click", () => {
+      chart = button.dataset.chart;
+      for (const tab of all("[data-chart]")) tab.setAttribute("aria-pressed", String(tab === button));
+      $("population-genetics").hidden = chart !== "genetics";
+      $("gene-select-row").hidden = chart !== "genetics";
+      renderHistory();
+    });
+  }
+  new ResizeObserver(() => {
+    renderDish();
+    renderHistory();
+  }).observe($("dish"));
+  new ResizeObserver(renderHistory).observe($("history"));
+}
+
+function launch() {
+  mountControls();
+  const source = new Blob([$("worker-source").textContent], {type: "text/javascript"});
+  const url = URL.createObjectURL(source);
+  worker = new Worker(url);
+  worker.addEventListener("message", receive);
+  worker.addEventListener("error", () => {
+    renderStatus("error", snapshot?.tick || 0);
+    $("run-notice").textContent = "The simulation worker could not start.";
+    $("restart").disabled = true;
+  });
+  mountEvents();
+  updateTiming();
+  newRun();
+}
+
+launch();
+</script>
+</body>
+</html>
