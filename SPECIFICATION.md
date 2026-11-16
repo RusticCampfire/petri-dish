@@ -1,7 +1,5 @@
 # Petri Dish — Model Specification
 
-> Source: [live Google Docs specification](https://docs.google.com/document/d/12hA4m_78peEYwzJ9oAWqE6TUcwmCMj9ELT81kWjnMMc/edit). This Markdown copy is a snapshot; the Google Doc may be edited independently.
-
 # General settings
 
 ### Subject and goals
