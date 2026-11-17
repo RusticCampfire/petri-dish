@@ -1,5 +1,7 @@
 # Petri Dish Evolution Simulator
 
+The current stable release is **v0.2**.
+
 Petri Dish models a population evolving on a hexagonal grid. Adjust model parameters, try different food presets, inspect individual entities, and export run data as JSON.
 
 [Open the stable simulator](https://rusticcampfire.github.io/petri-dish/)

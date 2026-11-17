@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#151611">
+  <meta name="application-version" content="%%VERSION%%">
   <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
   <title>Petri Dish Evolution Simulator</title>
   <style>%%STYLE%%</style>
@@ -14,7 +15,9 @@
       <div class="panel playback">
         <div class="parameters-title">
           <h2>Run controls</h2>
-          <span id="run-status" class="status" role="status"><i></i><span>Ready</span></span>
+          <span id="run-status" class="status">
+            <i aria-hidden="true"></i><span><span id="run-status-text" role="status">Ready</span><span id="run-tick-rate" hidden></span></span>
+          </span>
         </div>
         <div class="transport">
           <button type="button" id="play" class="button primary" disabled><span class="icon icon-play" aria-hidden="true"></span><span>Start</span></button>
@@ -62,9 +65,10 @@
     <section class="center" aria-label="Dish and run history">
       <div class="metric-grid" aria-label="Live readings">
         <div class="panel metric"><span>Population</span><strong id="m-pop" class="mint">—</strong><small id="m-peak">Peak —</small></div>
-        <div class="panel metric"><span>Food stock</span><strong id="m-food" class="amber">—</strong><small id="m-food-in">Food per hex —</small></div>
+        <div class="panel metric" title="Total mass of living entities"><span>Biomass</span><strong id="m-biomass">—</strong></div>
         <div class="panel metric"><span>Mean body mass</span><strong id="m-mass">—</strong><small id="m-min">Minimum —</small></div>
-        <div class="panel metric"><span>Births / deaths</span><strong id="m-balance">—</strong><small id="m-balance-tick">This tick —</small></div>
+        <div class="panel metric"><span>Max generation</span><strong id="m-generation">—</strong></div>
+        <div class="panel metric"><span>Avg. lifespan</span><strong id="m-lifespan">—</strong><small id="m-lifespan-detail">Ticks</small></div>
       </div>
 
       <div class="panel dish-panel">
@@ -95,7 +99,7 @@
           </div>
         </div>
         <div id="gene-select-row" class="gene-choice">
-          <label for="gene-select">Coefficient</label><select id="gene-select"></select>
+          <label for="gene-select">Activity metric</label><select id="gene-select"></select>
         </div>
         <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
         <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
@@ -111,33 +115,20 @@
     </section>
 
     <aside class="right-rail" aria-label="Observation gauges">
-      <div class="panel resource-panel">
-        <h2>Resource stores</h2>
-        <div class="bar-group"><div class="label-line"><span>Energy</span><output id="energy-value">—</output></div><div class="bar"><i id="energy-bar"></i></div></div>
-        <div class="bar-group"><div class="label-line"><span>Waste</span><output id="waste-value">—</output></div><div class="bar purple"><i id="waste-bar"></i></div></div>
-        <div class="readout-grid">
-          <div><span>Food in</span><strong id="food-produced">—</strong></div>
-          <div><span>Food eaten</span><strong id="food-eaten">—</strong></div>
-          <div><span>Food recycled</span><strong id="food-recycled">—</strong></div>
-          <div><span>Total mass</span><strong id="mass-total">—</strong></div>
-        </div>
-      </div>
-
       <div class="panel activity-panel">
         <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
-        <div class="activity-head"><span>Activity</span><span>Selected</span><span>Tried</span><span>Done</span></div>
+        <div class="activity-head"><span>Activity</span><span>Mean probability</span><span>Selected</span><span>Tried</span><span>Done</span></div>
         <div id="activity-list"></div>
         <p class="note">Reproduction can skip selected activities.</p>
         <div class="readout-grid compact">
           <div><span>Sudden deaths</span><strong id="deaths-sudden">—</strong></div>
           <div><span>Persistence deaths</span><strong id="deaths-persistence">—</strong></div>
           <div><span>Mutations</span><strong id="mutations">—</strong></div>
-          <div><span>Max generation</span><strong id="generation">—</strong></div>
         </div>
       </div>
 
-      <div class="panel inspector-panel">
-        <div class="parameters-title"><h2>Hex inspector</h2><span id="hex-address" class="hex-address">0, 0</span></div>
+      <details class="panel inspector-panel">
+        <summary class="observation-summary"><h2>Hex inspector <span id="hex-address" class="hex-address">0, 0</span></h2></summary>
         <div class="readout-grid compact inspector-metrics">
           <div><span>Occupants</span><strong id="hex-count">—</strong></div>
           <div><span>Food stock</span><strong id="hex-food">—</strong></div>
@@ -158,7 +149,18 @@
           </details>
         </div>
         <p id="inspected-tick" class="note" hidden></p>
-      </div>
+      </details>
+
+      <details class="panel resource-panel">
+        <summary class="observation-summary"><h2>Resource stores</h2></summary>
+        <div class="bar-group"><div class="label-line"><span>Energy</span><output id="energy-value">—</output></div><div class="bar"><i id="energy-bar"></i></div></div>
+        <div class="bar-group"><div class="label-line"><span>Waste</span><output id="waste-value">—</output></div><div class="bar purple"><i id="waste-bar"></i></div></div>
+        <div class="readout-grid">
+          <div><span>Food in</span><strong id="food-produced">—</strong></div>
+          <div><span>Food eaten</span><strong id="food-eaten">—</strong></div>
+          <div><span>Food recycled</span><strong id="food-recycled">—</strong></div>
+        </div>
+      </details>
     </aside>
   </main>
   <footer class="page-actions">

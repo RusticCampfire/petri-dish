@@ -1,12 +1,15 @@
 "use strict";
 
-const {ACTIVITIES, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
+const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
 const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
 const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
 const CHART_WINDOW = 5000;
+const DEFAULT_MODEL_PARAMS = Object.fromEntries(
+  Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key)),
+);
 const MODEL_PRESETS = {
-  default: DEFAULT_PARAMS,
-  "scarce-food": {...DEFAULT_PARAMS, foodMean: 1.5, foodSD: 8},
+  default: DEFAULT_MODEL_PARAMS,
+  "scarce-food": {...DEFAULT_MODEL_PARAMS, foodMean: 1.5, foodSD: 8},
 };
 const $ = id => document.getElementById(id);
 const all = selector => Array.from(document.querySelectorAll(selector));
@@ -257,18 +260,28 @@ function mountControls() {
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const el = document.createElement("div");
     el.className = "activity-row";
-    el.innerHTML = '<span></span><span class="value"></span><span class="value"></span><span class="value success"></span>';
-    const [name, selected, attempted, done] = el.children;
-    name.textContent = ACTIVITIES[i];
+    el.innerHTML = '<span class="value"></span><span class="value"></span><span class="value"></span><span class="value success"></span>';
+    const [probability, selected, attempted, done] = el.children;
+    el.prepend(makeKnob([ACTIVITY_ENABLED_KEYS[i], ACTIVITIES[i], "toggle"], params, "live"));
+    probability.id = "activity-probability-" + i;
     selected.id = "activity-selected-" + i;
     attempted.id = "activity-attempted-" + i;
     done.id = "activity-done-" + i;
     $("activity-list").append(el);
+  }
+  const historySelect = $("gene-select");
+  for (const name of new Set(["Reproduction", "Movement", ...ACTIVITIES])) {
+    const activity = ACTIVITIES.indexOf(name);
+    const probability = new Option(name + " · Mean probability", "probability-" + activity);
+    probability.dataset.probabilityActivity = String(activity);
+    historySelect.add(probability);
     for (let j = 0; j < COEFFICIENTS.length; j++) {
-      const option = new Option(ACTIVITIES[i] + " · " + COEFFICIENTS[j], i * COEFFICIENTS.length + j);
-      $("gene-select").add(option);
+      historySelect.add(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
     }
   }
+  const reproduction = ACTIVITIES.indexOf("Reproduction");
+  const bias = COEFFICIENTS.indexOf("Bias");
+  historySelect.value = String(reproduction * COEFFICIENTS.length + bias);
   mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages");
   mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients");
 }
@@ -337,10 +350,13 @@ function renderStatus(reason, tick) {
   setupLocked = running || tick > 0 || failed || reason === "loading";
   const active = $("run-status");
   active.className = "status " + reason;
-  active.lastElementChild.textContent = {
+  write("run-status-text", {
     ready: "Ready", paused: "Paused", running: "Running",
     checkpoint: "Checkpoint", error: "Stopped", loading: "Loading",
-  }[reason];
+  }[reason]);
+  const tickRate = $("run-tick-rate");
+  tickRate.hidden = !running;
+  tickRate.textContent = running ? " (… ticks/s)" : "";
   $("play").disabled = !ready || failed || commandPending;
   $("step").disabled = !ready || running || failed || commandPending;
   $("restart").disabled = !ready;
@@ -393,6 +409,12 @@ function receive({data}) {
       commandPending = false;
       renderStatus(data.reason, data.tick);
       break;
+    case "tick-rate":
+      if (running) {
+        const rate = data.ticksPerSecond;
+        write("run-tick-rate", " (" + (rate < 10 ? dec : int).format(rate) + " ticks/s)");
+      }
+      break;
     case "frame":
       if (data.replaceHistory) {
         history = [];
@@ -401,6 +423,7 @@ function receive({data}) {
         history.push({
           tick: record.tick, population: record.population, food: record.food, energy: record.energy,
           waste: record.waste, genes: record.genes.map(([mean, sd]) => [mean, sd]),
+          meanDecisionProbabilities: record.meanDecisionProbabilities,
         });
       }
       if (history.length > CHART_WINDOW) history.splice(0, history.length - CHART_WINDOW);
@@ -448,17 +471,18 @@ function download(blob, filename) {
 }
 
 function renderGauges(summary, minimum) {
-  const deathTotal = summary.totals.suddenDeaths + summary.totals.persistenceDeaths;
-  const deathsNow = summary.suddenDeaths + summary.persistenceDeaths;
   write("tick", String(summary.tick).padStart(4, "0"));
   write("m-pop", int.format(summary.population));
   write("m-peak", "Peak " + int.format(summary.peakPopulation));
-  write("m-food", dec.format(summary.food));
-  write("m-food-in", dec.format(summary.food / snapshot.cells.length) + " F per hex");
+  write("m-biomass", dec.format(summary.mass));
   write("m-mass", summary.population ? dec.format(summary.mass / summary.population) : "—");
   write("m-min", "Minimum " + (minimum >= 0.01 ? dec.format(minimum) : exact(minimum)));
-  write("m-balance", int.format(summary.totals.births) + " / " + int.format(deathTotal));
-  write("m-balance-tick", "This tick " + int.format(summary.births) + " / " + int.format(deathsNow));
+  write("m-generation", summary.population ? int.format(summary.generation) : "—");
+  write("m-lifespan", summary.meanLifespan === null ? "—" : dec.format(summary.meanLifespan));
+  const samples = summary.lifespanSamples;
+  write("m-lifespan-detail", samples
+    ? "Ticks · last " + int.format(samples) + (samples === 1 ? " death" : " deaths")
+    : "Ticks");
   write("dish-caption", int.format(snapshot.cells.length) + " hexes · Radius " + snapshot.cells.at(-1).r);
   for (const kind of ["energy", "waste"]) {
     const capacity = summary[kind + "Capacity"];
@@ -469,16 +493,16 @@ function renderGauges(summary, minimum) {
   write("food-produced", dec.format(summary.foodProduced));
   write("food-eaten", dec.format(summary.foodConsumed));
   write("food-recycled", dec.format(summary.foodRecycled));
-  write("mass-total", dec.format(summary.mass));
   write("deaths-sudden", int.format(summary.totals.suddenDeaths));
   write("deaths-persistence", int.format(summary.totals.persistenceDeaths));
   write("mutations", int.format(summary.totals.mutations));
-  write("generation", summary.population ? int.format(summary.generation) : "—");
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const stats = summary.activities[i];
-    write("activity-selected-" + i, int.format(stats.selected));
-    write("activity-attempted-" + i, int.format(stats.attempted));
-    write("activity-done-" + i, int.format(stats.succeeded));
+    const enabled = appliedParams[ACTIVITY_ENABLED_KEYS[i]];
+    write("activity-probability-" + i, formatProbability(summary.meanDecisionProbabilities[i]));
+    write("activity-selected-" + i, enabled ? int.format(stats.selected) : "—");
+    write("activity-attempted-" + i, enabled ? int.format(stats.attempted) : "—");
+    write("activity-done-" + i, enabled ? int.format(stats.succeeded) : "—");
   }
 }
 
@@ -667,7 +691,7 @@ function renderInspector() {
   write("entity-origin", "Generation " + int.format(selected.generation) + " · Born at tick " + int.format(selected.born)
     + (selected.parentId ? " · Parent " + int.format(selected.parentId) : " · Founder"));
   const probabilities = selected.lastDecisionProbabilities;
-  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions yet");
+  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions this tick");
   for (let i = 0; i < ACTIVITIES.length; i++) {
     write("entity-genes-table-" + i + "-0", formatProbability(probabilities?.[i] ?? null));
     for (let j = 0; j < COEFFICIENTS.length; j++) {
@@ -676,9 +700,9 @@ function renderInspector() {
   }
 }
 
-function plotRange(series, nonnegative) {
+function plotRange(series, nonnegative, minimumMaximum = 1) {
   let minimum = nonnegative ? 0 : Infinity;
-  let maximum = nonnegative ? 1 : -Infinity;
+  let maximum = nonnegative ? minimumMaximum : -Infinity;
   for (const line of series) {
     for (const value of line.values) {
       if (!Number.isFinite(value)) continue;
@@ -711,8 +735,9 @@ function axisValue(value) {
 function renderHistory() {
   const context = canvasContext($("history"));
   if (!context || history.length === 0) return;
-  const {ctx, width, height} = context;
-  const gene = Number($("gene-select").value) || 0;
+  const metric = $("gene-select").selectedOptions[0];
+  const probabilityActivity = metric.dataset.probabilityActivity;
+  const probabilityChart = chart === "genetics" && probabilityActivity !== undefined;
   const first = history[0].tick;
   const last = history.at(-1).tick;
   let series;
@@ -729,7 +754,17 @@ function renderHistory() {
     ];
     legend = series;
     write("history-caption", "Dish-wide stocks by tick");
+  } else if (probabilityChart) {
+    const activity = Number(probabilityActivity);
+    series = [{
+      name: ACTIVITIES[activity] + " mean probability",
+      color: "#ccdfa4",
+      values: history.map(record => record.meanDecisionProbabilities[activity]),
+    }];
+    legend = series;
+    write("history-caption", "Mean decision probability by tick");
   } else {
+    const gene = Number(metric.value);
     const coefficient = history.map(record => record.genes[gene]);
     series = [
       {name: "Mean", color: "#ccdfa4", values: coefficient.map(([mean]) => mean)},
@@ -741,10 +776,12 @@ function renderHistory() {
   }
   if (first > 0) $("history-caption").textContent += " · Latest " + int.format(CHART_WINDOW) + " ticks";
   const lastPoint = series[0].values.at(-1);
+  const formatValue = probabilityChart ? formatProbability : axisValue;
+  const noValue = probabilityChart ? ". No probability recorded at this tick." : ". No surviving entities.";
   $("history").setAttribute("aria-label", series[0].name + " from tick " + first + " to " + last
-    + (lastPoint === null ? ". No surviving entities." : ". Latest value " + axisValue(lastPoint) + "."));
+    + (lastPoint === null ? noValue : ". Latest value " + formatValue(lastPoint) + "."));
   drawLegend(legend);
-  drawChart(context, series, first, last);
+  drawChart(context, series, first, last, probabilityChart);
 }
 
 function drawLegend(legend) {
@@ -760,8 +797,10 @@ function drawLegend(legend) {
   }));
 }
 
-function drawChart({ctx, width, height}, series, first, last) {
-  const [min, max] = plotRange(series, chart !== "genetics");
+function drawChart({ctx, width, height}, series, first, last, probabilityChart) {
+  const coefficientBand = chart === "genetics" && !probabilityChart;
+  const [min, max] = plotRange(series, !coefficientBand, probabilityChart ? 0.01 : 1);
+  const formatAxis = probabilityChart ? percent.format : axisValue;
   const left = 47;
   const right = width - 13;
   const top = 9;
@@ -777,7 +816,7 @@ function drawChart({ctx, width, height}, series, first, last) {
   for (let mark = 0; mark <= 4; mark++) {
     const value = min + (max - min) * mark / 4;
     const position = y(value);
-    ctx.fillText(axisValue(value), left - 6, position);
+    ctx.fillText(formatAxis(value), left - 6, position);
     ctx.beginPath();
     ctx.moveTo(left, position);
     ctx.lineTo(right, position);
@@ -793,7 +832,7 @@ function drawChart({ctx, width, height}, series, first, last) {
   ctx.beginPath();
   ctx.rect(left - 3, top - 5, right - left + 6, bottom - top + 9);
   ctx.clip();
-  if (chart === "genetics") {
+  if (coefficientBand) {
     const upper = series[1].values;
     const lower = series[2].values;
     const lastValid = upper.findLastIndex(Number.isFinite);
@@ -808,7 +847,7 @@ function drawChart({ctx, width, height}, series, first, last) {
       ctx.fill();
     }
   }
-  const lines = chart === "genetics" ? series.slice(0, 1) : series;
+  const lines = coefficientBand ? series.slice(0, 1) : series;
   for (const line of lines) {
     ctx.beginPath();
     let located = false;

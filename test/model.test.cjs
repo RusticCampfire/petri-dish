@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const {test} = require("node:test");
 const {
-  Simulation, Random, DEFAULT_PARAMS, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
+  Simulation, Random, ACTIVITY_ENABLED_KEYS, DEFAULT_PARAMS, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
 } = require("../src/model.js");
 
 const approx = (actual, expected) => assert.ok(
@@ -93,6 +93,32 @@ test("feeding precedes persistence, which precedes every optional activity", () 
   assert.equal(frame.food, 10);
 });
 
+test("moving average lifespan retains the most recent 100 deaths across both causes", () => {
+  const allOff = Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, false]));
+  const sim = quiet({...allOff, persistence: 0.1}, {radius: 6, founders: 101});
+  assert.equal(sim.history[0].meanLifespan, null);
+  assert.equal(sim.history[0].lifespanSamples, 0);
+
+  sim.entities[0].energy = 0;
+  const first = sim.step();
+  assert.equal(first.persistenceDeaths, 1);
+  assert.equal(first.meanLifespan, 1);
+  assert.equal(first.lifespanSamples, 1);
+
+  for (const entity of sim.entities.slice(1)) entity.energy = 0;
+  const full = sim.step();
+  assert.equal(full.persistenceDeaths, 99);
+  assert.equal(full.lifespanSamples, 100);
+  approx(full.meanLifespan, 1.99);
+
+  sim.applyParameters({suddenDeath: 1});
+  const rolled = sim.step();
+  assert.equal(rolled.suddenDeaths, 1);
+  assert.equal(rolled.lifespanSamples, 100);
+  approx(rolled.meanLifespan, 2.01);
+  assert.equal(sim.step().meanLifespan, rolled.meanLifespan);
+});
+
 test("successful division terminates execution and newborns act next tick", () => {
   const sim = quiet();
   const parent = sim.entities[0];
@@ -112,7 +138,9 @@ test("successful division terminates execution and newborns act next tick", () =
   }
   assert.equal(frame.food, 1);
   sim.applyParameters({suddenDeath: 1});
-  assert.equal(sim.step().suddenDeaths, 2);
+  const deaths = sim.step();
+  assert.equal(deaths.suddenDeaths, 2);
+  assert.equal(deaths.meanLifespan, 1.5);
 });
 
 test("decision readouts average the probabilities used before execution and omit newborns", () => {
@@ -138,6 +166,42 @@ test("decision readouts average the probabilities used before execution and omit
   assert.equal(sim.exportResults().entities[2].lastDecisionProbabilities, null);
   sim.applyParameters({suddenDeath: 1});
   assert.deepEqual(sim.step().meanDecisionProbabilities, [null, null, null, null, null]);
+});
+
+test("activity switches exclude decisions and let the same coefficients resume on a later tick", () => {
+  const allOff = Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, false]));
+  const sim = quiet({...allOff, growthEnabled: true, foodMean: 1, foodSD: 0}, {initialEnergy: 40});
+  const entity = sim.entities[0];
+  plan(entity, 500, 500, 500, 500, 500);
+  const original = entity.genes.slice();
+  const before = sim.step();
+  assert.deepEqual(before.meanDecisionProbabilities, [null, 1, null, null, null]);
+  assert.equal(before.activities[1].succeeded, 1);
+  assert.equal(entity.mass, 11);
+
+  sim.applyParameters(allOff);
+  const excluded = sim.step();
+  assert.deepEqual(excluded.meanDecisionProbabilities, [null, null, null, null, null]);
+  assert.deepEqual(before.meanDecisionProbabilities, [null, 1, null, null, null]);
+  assert.equal(excluded.decisionCount, 0);
+  assert.equal(excluded.foodConsumed, 1);
+  assert.equal(excluded.births, 0);
+  assert.ok(excluded.activities.every(({selected, attempted, succeeded}) => selected + attempted + succeeded === 0));
+  assert.equal(sim.inspect(entity.cell, entity.id).entity.lastDecisionProbabilities, null);
+  assert.deepEqual(entity.genes, original);
+  assert.equal(entity.mass, 11);
+
+  sim.applyParameters({growthEnabled: true});
+  const resumed = sim.step();
+  assert.equal(resumed.decisionCount, 1);
+  assert.equal(resumed.activities[1].succeeded, 1);
+  assert.deepEqual(sim.inspect(entity.cell, entity.id).entity.lastDecisionProbabilities, [null, 1, null, null, null]);
+  assert.deepEqual(entity.genes, original);
+  approx(entity.mass, 12.1);
+  assert.deepEqual(sim.exportResults().parameterChanges, [
+    {tick: 2, values: {growthEnabled: false}},
+    {tick: 3, values: {growthEnabled: true}},
+  ]);
 });
 
 test("infeasible division spends nothing and later choices still execute", () => {
@@ -231,6 +295,24 @@ test("optional parent mutation uses two independent copies of the original patte
   assert.notDeepEqual(child.genes, original);
   assert.notDeepEqual(child.genes, parent.genes);
   assert.equal(frame.mutations, 10);
+});
+
+test("disabled coefficients pass intact to parent and offspring during mutation", () => {
+  const sim = quiet({growthEnabled: false, movementEnabled: false, mutateParent: true, mutationRate: 1});
+  const parent = sim.entities[0];
+  plan(parent, -500, 500, -500, 500, 800);
+  for (let i = 0; i < parent.genes.length; i++) {
+    if (i % 4 !== 0) parent.genes[i] = (i + 1) * 0.001;
+  }
+  const original = parent.genes.slice();
+  const frame = sim.step();
+  assert.equal(frame.births, 1);
+  assert.equal(frame.mutations, 24);
+  for (const entity of sim.entities) {
+    assert.deepEqual(entity.genes.slice(4, 8), original.slice(4, 8));
+    assert.deepEqual(entity.genes.slice(12, 16), original.slice(12, 16));
+    assert.notDeepEqual(entity.genes.slice(0, 4), original.slice(0, 4));
+  }
 });
 
 test("observation leaves evolution unchanged and population and food accounting hold", () => {

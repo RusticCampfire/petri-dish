@@ -1,6 +1,7 @@
 "use strict";
 
 const {Simulation, DEFAULT_PAUSE_TICK} = Petri;
+const TICK_RATE_INTERVAL = 750;
 let simulation;
 let runId = 0;
 let sequence = 0;
@@ -14,6 +15,7 @@ let speed = 0;
 let refresh = 500;
 let nextTick = 0;
 let lastFrame = 0;
+let tickRateSample = null;
 let pending = {};
 let watch = {cell: 45, entityId: null, token: 0};
 
@@ -36,11 +38,25 @@ function status(reason) {
   postMessage({type: "status", runId, running, tick: simulation?.tick ?? 0, reason});
 }
 
+function sampleTickRate(now) {
+  const tick = simulation.tick;
+  if (tickRateSample === null) {
+    tickRateSample = {tick, time: now};
+    return;
+  }
+  const elapsed = now - tickRateSample.time;
+  if (elapsed < TICK_RATE_INTERVAL) return;
+  const ticksPerSecond = 1000 * (tick - tickRateSample.tick) / elapsed;
+  tickRateSample = {tick, time: now};
+  postMessage({type: "tick-rate", runId, ticksPerSecond});
+}
+
 function stop() {
   clearTimeout(timer);
   timer = null;
   running = false;
   waitingForFrame = 0;
+  tickRateSample = null;
 }
 
 function schedule(delay) {
@@ -89,6 +105,7 @@ function pump() {
       return;
     }
     const now = performance.now();
+    if (advanced) sampleTickRate(now);
     if (refresh === 0 && advanced) publish({debug: true});
     if (refresh > 0 && now - lastFrame >= refresh) publish();
     const untilTick = Math.max(0, nextTick - now);

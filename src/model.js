@@ -1,7 +1,13 @@
 "use strict";
 
 const Petri = (() => {
-  const ACTIVITIES = ["Excretion", "Growth", "Shrinking", "Movement", "Reproduction"];
+  const VERSION = "0.2";
+  const ACTIVITY_NAMES = {
+    excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
+    movementEnabled: "Movement", reproductionEnabled: "Reproduction",
+  };
+  const ACTIVITIES = Object.values(ACTIVITY_NAMES);
+  const ACTIVITY_ENABLED_KEYS = Object.keys(ACTIVITY_NAMES);
   const COEFFICIENTS = ["Bias", "Mass", "Energy", "Waste"];
   const DEFAULT_SETUP = Object.freeze({
     radius: 5, founders: 30, initialMass: 10, initialEnergy: 40, initialWaste: 0,
@@ -14,8 +20,10 @@ const Petri = (() => {
     growthSpread: 0.2, movementCost: 0.02, reproductionCost: 2, divisionLoss: 0.1,
     offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, mutationWidth: 0.2,
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
+    ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
   const DEFAULT_PAUSE_TICK = 0;
+  const LIFESPAN_WINDOW = 100;
   const DIRECTIONS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
   const UINT32 = 4294967296;
 
@@ -234,6 +242,9 @@ const Petri = (() => {
       this.history = [];
       this.parameterChanges = [];
       this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0};
+      this.recentLifespans = [];
+      this.lifespanSum = 0;
+      this.nextLifespanIndex = 0;
       this.peakPopulation = this.setup.founders;
       this.stats = tickStats();
       this.initialParams = {...this.params};
@@ -280,6 +291,15 @@ const Petri = (() => {
       if (Object.keys(actual).length) this.parameterChanges.push({tick: this.tick + 1, values: actual});
     }
 
+    recordDeath(entity) {
+      const lifespan = this.tick - entity.born;
+      const index = this.nextLifespanIndex;
+      this.lifespanSum += lifespan - (this.recentLifespans[index] ?? 0);
+      this.recentLifespans[index] = lifespan;
+      this.nextLifespanIndex = (index + 1) % LIFESPAN_WINDOW;
+      this.cells[entity.cell].released += entity.mass;
+    }
+
     step() {
       this.tick++;
       this.entropy(this.tickSalt);
@@ -292,7 +312,7 @@ const Petri = (() => {
       for (const entity of this.entities) {
         if (this.params.suddenDeath > 0 && this.random.unit() < this.params.suddenDeath) {
           this.stats.suddenDeaths++;
-          this.cells[entity.cell].released += entity.mass;
+          this.recordDeath(entity);
         } else {
           feeding.push(entity);
           this.cells[entity.cell].feeders.push(entity);
@@ -316,7 +336,7 @@ const Petri = (() => {
         const cost = this.params.persistence * entity.mass;
         if (entity.energy < cost) {
           this.stats.persistenceDeaths++;
-          this.cells[entity.cell].released += entity.mass;
+          this.recordDeath(entity);
         } else {
           entity.energy -= cost;
           this.entities.push(entity);
@@ -324,11 +344,21 @@ const Petri = (() => {
       }
 
       // 5. Decisions use the same pre-execution state within each entity.
+      const enabled = ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
+      const anyEnabled = enabled.some(Boolean);
       const probabilitySums = new Float64Array(ACTIVITIES.length);
       for (const entity of this.entities) {
         entity.plan.length = 0;
-        const probabilities = entity.lastDecisionProbabilities ??= new Float64Array(ACTIVITIES.length);
+        if (!anyEnabled) {
+          entity.lastDecisionProbabilities = null;
+          continue;
+        }
+        const probabilities = entity.lastDecisionProbabilities ??= new Array(ACTIVITIES.length);
         for (let activity = 0; activity < ACTIVITIES.length; activity++) {
+          if (!enabled[activity]) {
+            probabilities[activity] = null;
+            continue;
+          }
           const logit = dotProduct(entity, activity * COEFFICIENTS.length);
           const rareOdds = Math.exp(-Math.abs(logit));
           const probability = (logit < 0 ? rareOdds : 1) / (1 + rareOdds);
@@ -340,10 +370,11 @@ const Petri = (() => {
         }
         entity.plan.sort((a, b) => a.logit === b.logit ? a.tie - b.tie : (a.logit > b.logit ? -1 : 1));
       }
-      const decisionCount = this.entities.length;
+      const decisionCount = anyEnabled ? this.entities.length : 0;
       this.stats.decisionCount = decisionCount;
       if (decisionCount) {
-        this.stats.meanDecisionProbabilities = Array.from(probabilitySums, sum => sum / decisionCount);
+        this.stats.meanDecisionProbabilities = Array.from(probabilitySums, (sum, activity) =>
+          enabled[activity] ? sum / decisionCount : null);
       }
 
       // 6. Execute in priority order against the current state.
@@ -457,6 +488,8 @@ const Petri = (() => {
       const genes = original.slice();
       if (this.params.mutationRate === 0 || this.params.mutationWidth === 0) return genes;
       for (let i = 0; i < genes.length; i++) {
+        const activity = Math.floor(i / COEFFICIENTS.length);
+        if (!this.params[ACTIVITY_ENABLED_KEYS[activity]]) continue;
         if (this.random.unit() >= this.params.mutationRate) continue;
         const mutated = mutateValue(genes[i], this.params, this.random);
         if (mutated !== genes[i]) this.stats.mutations++;
@@ -515,8 +548,10 @@ const Petri = (() => {
         throw new RangeError("A simulated stock exceeded the browser’s numerical range.");
       }
 
+      const lifespanSamples = this.recentLifespans.length;
       const result = {
         tick: this.tick, population, food, mass, energy, waste, generation, genes,
+        lifespanSamples, meanLifespan: lifespanSamples ? this.lifespanSum / lifespanSamples : null,
         energyCapacity, wasteCapacity,
         peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
       };
@@ -545,7 +580,7 @@ const Petri = (() => {
 
     exportResults() {
       return {
-        model: "Petri Dish", version: "0.1", tick: this.tick, minimumMass: this.minMass,
+        model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
         setup: this.setup, initialParameters: this.initialParams, appliedParameters: this.params,
         parameterChanges: this.parameterChanges, activityOrder: ACTIVITIES, coefficientOrder: COEFFICIENTS,
         coefficientStatistics: ["mean", "populationStandardDeviation", "minimum", "maximum"],
@@ -556,7 +591,8 @@ const Petri = (() => {
   }
 
   return {
-    Simulation, ACTIVITIES, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
+    VERSION,
+    Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
     Random, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
   };
 })();

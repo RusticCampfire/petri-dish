@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#151611">
+  <meta name="application-version" content="0.2">
   <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
   <title>Petri Dish Evolution Simulator</title>
   <style>:root {
@@ -126,6 +127,7 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 .run-notice { margin-top: 12px; color: var(--accent-bright); font-size: 12px; }
 .run-notice.error { color: var(--danger); }
 .parameters-title { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 20px; }
+.playback > .parameters-title { flex-wrap: wrap; }
 .parameters > .parameters-title { padding: 15px 14px 13px; }
 .preset-panel { display: grid; gap: 6px; padding: 10px 14px; }
 .preset-panel label { font-size: 12px; font-weight: 620; }
@@ -134,7 +136,7 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 .live i { width: 6px; height: 6px; }
 .pending { padding: 0 14px 10px; color: var(--accent-bright); font-size: 11px; }
 .parameter-group { border-top: 1px solid var(--line); }
-.parameter-group summary, .entity-genes summary {
+.parameter-group summary, .entity-genes summary, .observation-summary {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -147,8 +149,8 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 }
 .playback-settings summary { min-height: 29px; padding: 6px 0 0; }
 .playback-settings[open] summary { margin-bottom: 6px; }
-.parameter-group summary::-webkit-details-marker, .entity-genes summary::-webkit-details-marker { display: none; }
-.parameter-group summary::before, .entity-genes summary::before {
+.parameter-group summary::-webkit-details-marker, .entity-genes summary::-webkit-details-marker, .observation-summary::-webkit-details-marker { display: none; }
+.parameter-group summary::before, .entity-genes summary::before, .observation-summary::before {
   content: "";
   width: 5px;
   height: 5px;
@@ -183,14 +185,12 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .derived { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); margin: 3px 0 0; }
 .derived output { color: var(--ink); font-family: var(--mono); }
 
-.metric-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
-.metric { padding: 12px 12px 10px; min-height: 93px; }
+.metric-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; }
+.metric { padding: 9px 10px 8px; min-height: 74px; }
 .metric > span { color: var(--muted); display: block; font-size: 11px; line-height: 1.4; }
-.metric strong { display: block; font: 590 clamp(16px, 1.7vw, 26px)/1.28 var(--mono); margin: 4px 0 2px; letter-spacing: -.053em; overflow-wrap: anywhere; }
-#m-balance { font-size: clamp(13px,1.38vw,22px); }
+.metric strong { display: block; font: 590 clamp(16px, 1.55vw, 24px)/1.25 var(--mono); margin: 3px 0 1px; letter-spacing: -.053em; overflow-wrap: anywhere; }
 .metric small { display: block; font-size: 10px; color: var(--soft); }
 .mint { color: var(--mint); }
-.amber { color: var(--accent); }
 
 .dish-panel, .history-panel { overflow: hidden; }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 15px 12px; }
@@ -224,10 +224,13 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .chart-legend i { display: inline-block; background: var(--swatch); width: 9px; height: 3px; border-radius: 3px; }
 .gene-choice { display: flex; align-items: center; gap: 8px; padding: 0 15px 10px; color: var(--muted); font-size: 11px; }
+.gene-choice select { min-width: 0; }
 .population-genetics { margin: 0 15px; padding: 10px 0 12px; border-top: 1px solid var(--line); }
 select { padding: 4px 6px; font-size: 11px; }
 
-.resource-panel h2 { margin-bottom: 13px; }
+.observation-summary { min-height: 22px; padding: 0; }
+.observation-summary h2 { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.resource-panel[open] > .observation-summary { margin-bottom: 13px; }
 .bar-group + .bar-group { margin-top: 11px; }
 .bar-group output { color: var(--ink); }
 .bar { background: #34382b; height: 5px; margin-top: 5px; border-radius: 6px; overflow: hidden; }
@@ -244,11 +247,15 @@ select { padding: 4px 6px; font-size: 11px; }
 .readout-grid span, .entity-values span { display: block; color: var(--muted); font-size: 10px; }
 .readout-grid strong, .entity-values strong { display: block; color: var(--ink); font: 13px var(--mono); margin-top: 4px; overflow-wrap: anywhere; }
 .readout-grid.compact { margin-top: 12px; }
+.resource-panel .readout-grid, .activity-panel .readout-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
 .subtle { color: var(--soft); font-size: 10px; white-space: nowrap; }
-.activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 46px 32px 34px; align-items: center; gap: 4px; }
-.activity-head { padding: 9px 0 4px; color: var(--soft); font-size: 10px; }
+.activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 54px 42px 28px 28px; align-items: center; gap: 4px; }
+.activity-head { align-items: end; padding: 9px 0 4px; color: var(--soft); font-size: 10px; line-height: 1.2; }
 .activity-head > span:not(:first-child), .activity-row > span:not(:first-child) { text-align: right; }
 .activity-row { min-height: 25px; border-top: 1px solid var(--line); color: #dfdccd; font-size: 11px; }
+.activity-row .knob-check { gap: 5px; margin: 0; padding: 4px 0; cursor: pointer; }
+.activity-row .knob-check span, .activity-row .value { overflow-wrap: anywhere; }
+.activity-row:has(input:not(:checked)) .knob-check { color: var(--muted); }
 .activity-row .value { color: var(--muted); font: 11px var(--mono); }
 .activity-row .success { color: var(--mint); }
 .note { color: var(--soft); font-size: 10px; margin-top: 8px; }
@@ -275,7 +282,7 @@ select { padding: 4px 6px; font-size: 11px; }
 
 @media (max-width: 1120px) {
   .desk { grid-template-columns: minmax(200px, 225px) minmax(0, 1fr); }
-  .right-rail { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+  .right-rail { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); align-items: start; }
 }
 @media (max-width: 700px) {
   .desk { grid-template-columns: minmax(0, 1fr); padding: 13px 12px 16px; }
@@ -285,8 +292,7 @@ select { padding: 4px 6px; font-size: 11px; }
   .center { grid-row: 2; }
   .preset-panel { grid-row: 3; }
   .parameters { grid-row: 4; }
-  .right-rail { grid-column: 1; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
-  .inspector-panel { grid-column: 1 / -1; }
+  .right-rail { grid-column: 1; gap: 12px; }
   .timing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; }
   .timing .label-line { grid-row: 1; }
   .timing input { grid-row: 2; }
@@ -294,10 +300,10 @@ select { padding: 4px 6px; font-size: 11px; }
   .refresh-label { margin-top: 0; }
   .viewport { height: clamp(265px, 67vw, 420px); }
 }
-@media (max-width: 390px) {
-  .metric-grid { gap: 6px; grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .metric { min-height: 73px; }
-  .right-rail { grid-template-columns: minmax(0,1fr); }
+@media (max-width: 520px) {
+  .metric-grid { gap: 6px; grid-template-columns: repeat(6, minmax(0,1fr)); }
+  .metric { grid-column: span 2; }
+  .metric:nth-last-child(-n+2) { grid-column: span 3; }
 }
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color .14s, border-color .14s; }
@@ -310,7 +316,9 @@ select { padding: 4px 6px; font-size: 11px; }
       <div class="panel playback">
         <div class="parameters-title">
           <h2>Run controls</h2>
-          <span id="run-status" class="status" role="status"><i></i><span>Ready</span></span>
+          <span id="run-status" class="status">
+            <i aria-hidden="true"></i><span><span id="run-status-text" role="status">Ready</span><span id="run-tick-rate" hidden></span></span>
+          </span>
         </div>
         <div class="transport">
           <button type="button" id="play" class="button primary" disabled><span class="icon icon-play" aria-hidden="true"></span><span>Start</span></button>
@@ -358,9 +366,10 @@ select { padding: 4px 6px; font-size: 11px; }
     <section class="center" aria-label="Dish and run history">
       <div class="metric-grid" aria-label="Live readings">
         <div class="panel metric"><span>Population</span><strong id="m-pop" class="mint">—</strong><small id="m-peak">Peak —</small></div>
-        <div class="panel metric"><span>Food stock</span><strong id="m-food" class="amber">—</strong><small id="m-food-in">Food per hex —</small></div>
+        <div class="panel metric" title="Total mass of living entities"><span>Biomass</span><strong id="m-biomass">—</strong></div>
         <div class="panel metric"><span>Mean body mass</span><strong id="m-mass">—</strong><small id="m-min">Minimum —</small></div>
-        <div class="panel metric"><span>Births / deaths</span><strong id="m-balance">—</strong><small id="m-balance-tick">This tick —</small></div>
+        <div class="panel metric"><span>Max generation</span><strong id="m-generation">—</strong></div>
+        <div class="panel metric"><span>Avg. lifespan</span><strong id="m-lifespan">—</strong><small id="m-lifespan-detail">Ticks</small></div>
       </div>
 
       <div class="panel dish-panel">
@@ -391,7 +400,7 @@ select { padding: 4px 6px; font-size: 11px; }
           </div>
         </div>
         <div id="gene-select-row" class="gene-choice">
-          <label for="gene-select">Coefficient</label><select id="gene-select"></select>
+          <label for="gene-select">Activity metric</label><select id="gene-select"></select>
         </div>
         <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
         <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
@@ -407,33 +416,20 @@ select { padding: 4px 6px; font-size: 11px; }
     </section>
 
     <aside class="right-rail" aria-label="Observation gauges">
-      <div class="panel resource-panel">
-        <h2>Resource stores</h2>
-        <div class="bar-group"><div class="label-line"><span>Energy</span><output id="energy-value">—</output></div><div class="bar"><i id="energy-bar"></i></div></div>
-        <div class="bar-group"><div class="label-line"><span>Waste</span><output id="waste-value">—</output></div><div class="bar purple"><i id="waste-bar"></i></div></div>
-        <div class="readout-grid">
-          <div><span>Food in</span><strong id="food-produced">—</strong></div>
-          <div><span>Food eaten</span><strong id="food-eaten">—</strong></div>
-          <div><span>Food recycled</span><strong id="food-recycled">—</strong></div>
-          <div><span>Total mass</span><strong id="mass-total">—</strong></div>
-        </div>
-      </div>
-
       <div class="panel activity-panel">
         <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
-        <div class="activity-head"><span>Activity</span><span>Selected</span><span>Tried</span><span>Done</span></div>
+        <div class="activity-head"><span>Activity</span><span>Mean probability</span><span>Selected</span><span>Tried</span><span>Done</span></div>
         <div id="activity-list"></div>
         <p class="note">Reproduction can skip selected activities.</p>
         <div class="readout-grid compact">
           <div><span>Sudden deaths</span><strong id="deaths-sudden">—</strong></div>
           <div><span>Persistence deaths</span><strong id="deaths-persistence">—</strong></div>
           <div><span>Mutations</span><strong id="mutations">—</strong></div>
-          <div><span>Max generation</span><strong id="generation">—</strong></div>
         </div>
       </div>
 
-      <div class="panel inspector-panel">
-        <div class="parameters-title"><h2>Hex inspector</h2><span id="hex-address" class="hex-address">0, 0</span></div>
+      <details class="panel inspector-panel">
+        <summary class="observation-summary"><h2>Hex inspector <span id="hex-address" class="hex-address">0, 0</span></h2></summary>
         <div class="readout-grid compact inspector-metrics">
           <div><span>Occupants</span><strong id="hex-count">—</strong></div>
           <div><span>Food stock</span><strong id="hex-food">—</strong></div>
@@ -454,7 +450,18 @@ select { padding: 4px 6px; font-size: 11px; }
           </details>
         </div>
         <p id="inspected-tick" class="note" hidden></p>
-      </div>
+      </details>
+
+      <details class="panel resource-panel">
+        <summary class="observation-summary"><h2>Resource stores</h2></summary>
+        <div class="bar-group"><div class="label-line"><span>Energy</span><output id="energy-value">—</output></div><div class="bar"><i id="energy-bar"></i></div></div>
+        <div class="bar-group"><div class="label-line"><span>Waste</span><output id="waste-value">—</output></div><div class="bar purple"><i id="waste-bar"></i></div></div>
+        <div class="readout-grid">
+          <div><span>Food in</span><strong id="food-produced">—</strong></div>
+          <div><span>Food eaten</span><strong id="food-eaten">—</strong></div>
+          <div><span>Food recycled</span><strong id="food-recycled">—</strong></div>
+        </div>
+      </details>
     </aside>
   </main>
   <footer class="page-actions">
@@ -464,7 +471,13 @@ select { padding: 4px 6px; font-size: 11px; }
   <script type="text/plain" id="worker-source">"use strict";
 
 const Petri = (() => {
-  const ACTIVITIES = ["Excretion", "Growth", "Shrinking", "Movement", "Reproduction"];
+  const VERSION = "0.2";
+  const ACTIVITY_NAMES = {
+    excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
+    movementEnabled: "Movement", reproductionEnabled: "Reproduction",
+  };
+  const ACTIVITIES = Object.values(ACTIVITY_NAMES);
+  const ACTIVITY_ENABLED_KEYS = Object.keys(ACTIVITY_NAMES);
   const COEFFICIENTS = ["Bias", "Mass", "Energy", "Waste"];
   const DEFAULT_SETUP = Object.freeze({
     radius: 5, founders: 30, initialMass: 10, initialEnergy: 40, initialWaste: 0,
@@ -477,8 +490,10 @@ const Petri = (() => {
     growthSpread: 0.2, movementCost: 0.02, reproductionCost: 2, divisionLoss: 0.1,
     offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, mutationWidth: 0.2,
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
+    ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
   const DEFAULT_PAUSE_TICK = 0;
+  const LIFESPAN_WINDOW = 100;
   const DIRECTIONS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
   const UINT32 = 4294967296;
 
@@ -697,6 +712,9 @@ const Petri = (() => {
       this.history = [];
       this.parameterChanges = [];
       this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0};
+      this.recentLifespans = [];
+      this.lifespanSum = 0;
+      this.nextLifespanIndex = 0;
       this.peakPopulation = this.setup.founders;
       this.stats = tickStats();
       this.initialParams = {...this.params};
@@ -743,6 +761,15 @@ const Petri = (() => {
       if (Object.keys(actual).length) this.parameterChanges.push({tick: this.tick + 1, values: actual});
     }
 
+    recordDeath(entity) {
+      const lifespan = this.tick - entity.born;
+      const index = this.nextLifespanIndex;
+      this.lifespanSum += lifespan - (this.recentLifespans[index] ?? 0);
+      this.recentLifespans[index] = lifespan;
+      this.nextLifespanIndex = (index + 1) % LIFESPAN_WINDOW;
+      this.cells[entity.cell].released += entity.mass;
+    }
+
     step() {
       this.tick++;
       this.entropy(this.tickSalt);
@@ -755,7 +782,7 @@ const Petri = (() => {
       for (const entity of this.entities) {
         if (this.params.suddenDeath > 0 && this.random.unit() < this.params.suddenDeath) {
           this.stats.suddenDeaths++;
-          this.cells[entity.cell].released += entity.mass;
+          this.recordDeath(entity);
         } else {
           feeding.push(entity);
           this.cells[entity.cell].feeders.push(entity);
@@ -779,7 +806,7 @@ const Petri = (() => {
         const cost = this.params.persistence * entity.mass;
         if (entity.energy < cost) {
           this.stats.persistenceDeaths++;
-          this.cells[entity.cell].released += entity.mass;
+          this.recordDeath(entity);
         } else {
           entity.energy -= cost;
           this.entities.push(entity);
@@ -787,11 +814,21 @@ const Petri = (() => {
       }
 
       // 5. Decisions use the same pre-execution state within each entity.
+      const enabled = ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
+      const anyEnabled = enabled.some(Boolean);
       const probabilitySums = new Float64Array(ACTIVITIES.length);
       for (const entity of this.entities) {
         entity.plan.length = 0;
-        const probabilities = entity.lastDecisionProbabilities ??= new Float64Array(ACTIVITIES.length);
+        if (!anyEnabled) {
+          entity.lastDecisionProbabilities = null;
+          continue;
+        }
+        const probabilities = entity.lastDecisionProbabilities ??= new Array(ACTIVITIES.length);
         for (let activity = 0; activity < ACTIVITIES.length; activity++) {
+          if (!enabled[activity]) {
+            probabilities[activity] = null;
+            continue;
+          }
           const logit = dotProduct(entity, activity * COEFFICIENTS.length);
           const rareOdds = Math.exp(-Math.abs(logit));
           const probability = (logit < 0 ? rareOdds : 1) / (1 + rareOdds);
@@ -803,10 +840,11 @@ const Petri = (() => {
         }
         entity.plan.sort((a, b) => a.logit === b.logit ? a.tie - b.tie : (a.logit > b.logit ? -1 : 1));
       }
-      const decisionCount = this.entities.length;
+      const decisionCount = anyEnabled ? this.entities.length : 0;
       this.stats.decisionCount = decisionCount;
       if (decisionCount) {
-        this.stats.meanDecisionProbabilities = Array.from(probabilitySums, sum => sum / decisionCount);
+        this.stats.meanDecisionProbabilities = Array.from(probabilitySums, (sum, activity) =>
+          enabled[activity] ? sum / decisionCount : null);
       }
 
       // 6. Execute in priority order against the current state.
@@ -920,6 +958,8 @@ const Petri = (() => {
       const genes = original.slice();
       if (this.params.mutationRate === 0 || this.params.mutationWidth === 0) return genes;
       for (let i = 0; i < genes.length; i++) {
+        const activity = Math.floor(i / COEFFICIENTS.length);
+        if (!this.params[ACTIVITY_ENABLED_KEYS[activity]]) continue;
         if (this.random.unit() >= this.params.mutationRate) continue;
         const mutated = mutateValue(genes[i], this.params, this.random);
         if (mutated !== genes[i]) this.stats.mutations++;
@@ -978,8 +1018,10 @@ const Petri = (() => {
         throw new RangeError("A simulated stock exceeded the browser’s numerical range.");
       }
 
+      const lifespanSamples = this.recentLifespans.length;
       const result = {
         tick: this.tick, population, food, mass, energy, waste, generation, genes,
+        lifespanSamples, meanLifespan: lifespanSamples ? this.lifespanSum / lifespanSamples : null,
         energyCapacity, wasteCapacity,
         peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
       };
@@ -1008,7 +1050,7 @@ const Petri = (() => {
 
     exportResults() {
       return {
-        model: "Petri Dish", version: "0.1", tick: this.tick, minimumMass: this.minMass,
+        model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
         setup: this.setup, initialParameters: this.initialParams, appliedParameters: this.params,
         parameterChanges: this.parameterChanges, activityOrder: ACTIVITIES, coefficientOrder: COEFFICIENTS,
         coefficientStatistics: ["mean", "populationStandardDeviation", "minimum", "maximum"],
@@ -1019,7 +1061,8 @@ const Petri = (() => {
   }
 
   return {
-    Simulation, ACTIVITIES, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
+    VERSION,
+    Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
     Random, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
   };
 })();
@@ -1029,6 +1072,7 @@ if (typeof module === "object" && module.exports) module.exports = Petri;
 "use strict";
 
 const {Simulation, DEFAULT_PAUSE_TICK} = Petri;
+const TICK_RATE_INTERVAL = 750;
 let simulation;
 let runId = 0;
 let sequence = 0;
@@ -1042,6 +1086,7 @@ let speed = 0;
 let refresh = 500;
 let nextTick = 0;
 let lastFrame = 0;
+let tickRateSample = null;
 let pending = {};
 let watch = {cell: 45, entityId: null, token: 0};
 
@@ -1064,11 +1109,25 @@ function status(reason) {
   postMessage({type: "status", runId, running, tick: simulation?.tick ?? 0, reason});
 }
 
+function sampleTickRate(now) {
+  const tick = simulation.tick;
+  if (tickRateSample === null) {
+    tickRateSample = {tick, time: now};
+    return;
+  }
+  const elapsed = now - tickRateSample.time;
+  if (elapsed < TICK_RATE_INTERVAL) return;
+  const ticksPerSecond = 1000 * (tick - tickRateSample.tick) / elapsed;
+  tickRateSample = {tick, time: now};
+  postMessage({type: "tick-rate", runId, ticksPerSecond});
+}
+
 function stop() {
   clearTimeout(timer);
   timer = null;
   running = false;
   waitingForFrame = 0;
+  tickRateSample = null;
 }
 
 function schedule(delay) {
@@ -1117,6 +1176,7 @@ function pump() {
       return;
     }
     const now = performance.now();
+    if (advanced) sampleTickRate(now);
     if (refresh === 0 && advanced) publish({debug: true});
     if (refresh > 0 && now - lastFrame >= refresh) publish();
     const untilTick = Math.max(0, nextTick - now);
@@ -1225,16 +1285,19 @@ self.onmessage = ({data}) => {
   }
 };
 </script>
-  <script>const CONFIG = {"ACTIVITIES":["Excretion","Growth","Shrinking","Movement","Reproduction"],"COEFFICIENTS":["Bias","Mass","Energy","Waste"],"DEFAULT_SETUP":{"radius":5,"founders":30,"initialMass":10,"initialEnergy":40,"initialWaste":0,"initialFood":0,"biasLow":-3,"biasHigh":-1.5,"weightRange":0.01},"DEFAULT_PARAMS":{"foodMean":3,"foodSD":1.5,"intake":0.35,"energyPerFood":1,"energyWasteRatio":2,"foodPerMass":1,"energyCapacity":8,"wasteCapacity":4,"persistence":0.15,"excretionRate":1.2,"excretionCost":0.05,"growthFraction":0.1,"shrinkFraction":0.1,"growthSpread":0.2,"movementCost":0.02,"reproductionCost":2,"divisionLoss":0.1,"offspringShare":0.5,"suddenDeath":0.002,"mutationRate":0.01,"mutationWidth":0.2,"mutationSharpness":16,"mutationTail":3,"mutateParent":false},"DEFAULT_PAUSE_TICK":0};
+  <script>const CONFIG = {"ACTIVITIES":["Excretion","Growth","Shrinking","Movement","Reproduction"],"ACTIVITY_ENABLED_KEYS":["excretionEnabled","growthEnabled","shrinkingEnabled","movementEnabled","reproductionEnabled"],"COEFFICIENTS":["Bias","Mass","Energy","Waste"],"DEFAULT_SETUP":{"radius":5,"founders":30,"initialMass":10,"initialEnergy":40,"initialWaste":0,"initialFood":0,"biasLow":-3,"biasHigh":-1.5,"weightRange":0.01},"DEFAULT_PARAMS":{"foodMean":3,"foodSD":1.5,"intake":0.35,"energyPerFood":1,"energyWasteRatio":2,"foodPerMass":1,"energyCapacity":8,"wasteCapacity":4,"persistence":0.15,"excretionRate":1.2,"excretionCost":0.05,"growthFraction":0.1,"shrinkFraction":0.1,"growthSpread":0.2,"movementCost":0.02,"reproductionCost":2,"divisionLoss":0.1,"offspringShare":0.5,"suddenDeath":0.002,"mutationRate":0.01,"mutationWidth":0.2,"mutationSharpness":16,"mutationTail":3,"mutateParent":false,"excretionEnabled":true,"growthEnabled":true,"shrinkingEnabled":true,"movementEnabled":true,"reproductionEnabled":true},"DEFAULT_PAUSE_TICK":0};
 "use strict";
 
-const {ACTIVITIES, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
+const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
 const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
 const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
 const CHART_WINDOW = 5000;
+const DEFAULT_MODEL_PARAMS = Object.fromEntries(
+  Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key)),
+);
 const MODEL_PRESETS = {
-  default: DEFAULT_PARAMS,
-  "scarce-food": {...DEFAULT_PARAMS, foodMean: 1.5, foodSD: 8},
+  default: DEFAULT_MODEL_PARAMS,
+  "scarce-food": {...DEFAULT_MODEL_PARAMS, foodMean: 1.5, foodSD: 8},
 };
 const $ = id => document.getElementById(id);
 const all = selector => Array.from(document.querySelectorAll(selector));
@@ -1485,18 +1548,28 @@ function mountControls() {
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const el = document.createElement("div");
     el.className = "activity-row";
-    el.innerHTML = '<span></span><span class="value"></span><span class="value"></span><span class="value success"></span>';
-    const [name, selected, attempted, done] = el.children;
-    name.textContent = ACTIVITIES[i];
+    el.innerHTML = '<span class="value"></span><span class="value"></span><span class="value"></span><span class="value success"></span>';
+    const [probability, selected, attempted, done] = el.children;
+    el.prepend(makeKnob([ACTIVITY_ENABLED_KEYS[i], ACTIVITIES[i], "toggle"], params, "live"));
+    probability.id = "activity-probability-" + i;
     selected.id = "activity-selected-" + i;
     attempted.id = "activity-attempted-" + i;
     done.id = "activity-done-" + i;
     $("activity-list").append(el);
+  }
+  const historySelect = $("gene-select");
+  for (const name of new Set(["Reproduction", "Movement", ...ACTIVITIES])) {
+    const activity = ACTIVITIES.indexOf(name);
+    const probability = new Option(name + " · Mean probability", "probability-" + activity);
+    probability.dataset.probabilityActivity = String(activity);
+    historySelect.add(probability);
     for (let j = 0; j < COEFFICIENTS.length; j++) {
-      const option = new Option(ACTIVITIES[i] + " · " + COEFFICIENTS[j], i * COEFFICIENTS.length + j);
-      $("gene-select").add(option);
+      historySelect.add(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
     }
   }
+  const reproduction = ACTIVITIES.indexOf("Reproduction");
+  const bias = COEFFICIENTS.indexOf("Bias");
+  historySelect.value = String(reproduction * COEFFICIENTS.length + bias);
   mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages");
   mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients");
 }
@@ -1565,10 +1638,13 @@ function renderStatus(reason, tick) {
   setupLocked = running || tick > 0 || failed || reason === "loading";
   const active = $("run-status");
   active.className = "status " + reason;
-  active.lastElementChild.textContent = {
+  write("run-status-text", {
     ready: "Ready", paused: "Paused", running: "Running",
     checkpoint: "Checkpoint", error: "Stopped", loading: "Loading",
-  }[reason];
+  }[reason]);
+  const tickRate = $("run-tick-rate");
+  tickRate.hidden = !running;
+  tickRate.textContent = running ? " (… ticks/s)" : "";
   $("play").disabled = !ready || failed || commandPending;
   $("step").disabled = !ready || running || failed || commandPending;
   $("restart").disabled = !ready;
@@ -1621,6 +1697,12 @@ function receive({data}) {
       commandPending = false;
       renderStatus(data.reason, data.tick);
       break;
+    case "tick-rate":
+      if (running) {
+        const rate = data.ticksPerSecond;
+        write("run-tick-rate", " (" + (rate < 10 ? dec : int).format(rate) + " ticks/s)");
+      }
+      break;
     case "frame":
       if (data.replaceHistory) {
         history = [];
@@ -1629,6 +1711,7 @@ function receive({data}) {
         history.push({
           tick: record.tick, population: record.population, food: record.food, energy: record.energy,
           waste: record.waste, genes: record.genes.map(([mean, sd]) => [mean, sd]),
+          meanDecisionProbabilities: record.meanDecisionProbabilities,
         });
       }
       if (history.length > CHART_WINDOW) history.splice(0, history.length - CHART_WINDOW);
@@ -1676,17 +1759,18 @@ function download(blob, filename) {
 }
 
 function renderGauges(summary, minimum) {
-  const deathTotal = summary.totals.suddenDeaths + summary.totals.persistenceDeaths;
-  const deathsNow = summary.suddenDeaths + summary.persistenceDeaths;
   write("tick", String(summary.tick).padStart(4, "0"));
   write("m-pop", int.format(summary.population));
   write("m-peak", "Peak " + int.format(summary.peakPopulation));
-  write("m-food", dec.format(summary.food));
-  write("m-food-in", dec.format(summary.food / snapshot.cells.length) + " F per hex");
+  write("m-biomass", dec.format(summary.mass));
   write("m-mass", summary.population ? dec.format(summary.mass / summary.population) : "—");
   write("m-min", "Minimum " + (minimum >= 0.01 ? dec.format(minimum) : exact(minimum)));
-  write("m-balance", int.format(summary.totals.births) + " / " + int.format(deathTotal));
-  write("m-balance-tick", "This tick " + int.format(summary.births) + " / " + int.format(deathsNow));
+  write("m-generation", summary.population ? int.format(summary.generation) : "—");
+  write("m-lifespan", summary.meanLifespan === null ? "—" : dec.format(summary.meanLifespan));
+  const samples = summary.lifespanSamples;
+  write("m-lifespan-detail", samples
+    ? "Ticks · last " + int.format(samples) + (samples === 1 ? " death" : " deaths")
+    : "Ticks");
   write("dish-caption", int.format(snapshot.cells.length) + " hexes · Radius " + snapshot.cells.at(-1).r);
   for (const kind of ["energy", "waste"]) {
     const capacity = summary[kind + "Capacity"];
@@ -1697,16 +1781,16 @@ function renderGauges(summary, minimum) {
   write("food-produced", dec.format(summary.foodProduced));
   write("food-eaten", dec.format(summary.foodConsumed));
   write("food-recycled", dec.format(summary.foodRecycled));
-  write("mass-total", dec.format(summary.mass));
   write("deaths-sudden", int.format(summary.totals.suddenDeaths));
   write("deaths-persistence", int.format(summary.totals.persistenceDeaths));
   write("mutations", int.format(summary.totals.mutations));
-  write("generation", summary.population ? int.format(summary.generation) : "—");
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const stats = summary.activities[i];
-    write("activity-selected-" + i, int.format(stats.selected));
-    write("activity-attempted-" + i, int.format(stats.attempted));
-    write("activity-done-" + i, int.format(stats.succeeded));
+    const enabled = appliedParams[ACTIVITY_ENABLED_KEYS[i]];
+    write("activity-probability-" + i, formatProbability(summary.meanDecisionProbabilities[i]));
+    write("activity-selected-" + i, enabled ? int.format(stats.selected) : "—");
+    write("activity-attempted-" + i, enabled ? int.format(stats.attempted) : "—");
+    write("activity-done-" + i, enabled ? int.format(stats.succeeded) : "—");
   }
 }
 
@@ -1895,7 +1979,7 @@ function renderInspector() {
   write("entity-origin", "Generation " + int.format(selected.generation) + " · Born at tick " + int.format(selected.born)
     + (selected.parentId ? " · Parent " + int.format(selected.parentId) : " · Founder"));
   const probabilities = selected.lastDecisionProbabilities;
-  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions yet");
+  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions this tick");
   for (let i = 0; i < ACTIVITIES.length; i++) {
     write("entity-genes-table-" + i + "-0", formatProbability(probabilities?.[i] ?? null));
     for (let j = 0; j < COEFFICIENTS.length; j++) {
@@ -1904,9 +1988,9 @@ function renderInspector() {
   }
 }
 
-function plotRange(series, nonnegative) {
+function plotRange(series, nonnegative, minimumMaximum = 1) {
   let minimum = nonnegative ? 0 : Infinity;
-  let maximum = nonnegative ? 1 : -Infinity;
+  let maximum = nonnegative ? minimumMaximum : -Infinity;
   for (const line of series) {
     for (const value of line.values) {
       if (!Number.isFinite(value)) continue;
@@ -1939,8 +2023,9 @@ function axisValue(value) {
 function renderHistory() {
   const context = canvasContext($("history"));
   if (!context || history.length === 0) return;
-  const {ctx, width, height} = context;
-  const gene = Number($("gene-select").value) || 0;
+  const metric = $("gene-select").selectedOptions[0];
+  const probabilityActivity = metric.dataset.probabilityActivity;
+  const probabilityChart = chart === "genetics" && probabilityActivity !== undefined;
   const first = history[0].tick;
   const last = history.at(-1).tick;
   let series;
@@ -1957,7 +2042,17 @@ function renderHistory() {
     ];
     legend = series;
     write("history-caption", "Dish-wide stocks by tick");
+  } else if (probabilityChart) {
+    const activity = Number(probabilityActivity);
+    series = [{
+      name: ACTIVITIES[activity] + " mean probability",
+      color: "#ccdfa4",
+      values: history.map(record => record.meanDecisionProbabilities[activity]),
+    }];
+    legend = series;
+    write("history-caption", "Mean decision probability by tick");
   } else {
+    const gene = Number(metric.value);
     const coefficient = history.map(record => record.genes[gene]);
     series = [
       {name: "Mean", color: "#ccdfa4", values: coefficient.map(([mean]) => mean)},
@@ -1969,10 +2064,12 @@ function renderHistory() {
   }
   if (first > 0) $("history-caption").textContent += " · Latest " + int.format(CHART_WINDOW) + " ticks";
   const lastPoint = series[0].values.at(-1);
+  const formatValue = probabilityChart ? formatProbability : axisValue;
+  const noValue = probabilityChart ? ". No probability recorded at this tick." : ". No surviving entities.";
   $("history").setAttribute("aria-label", series[0].name + " from tick " + first + " to " + last
-    + (lastPoint === null ? ". No surviving entities." : ". Latest value " + axisValue(lastPoint) + "."));
+    + (lastPoint === null ? noValue : ". Latest value " + formatValue(lastPoint) + "."));
   drawLegend(legend);
-  drawChart(context, series, first, last);
+  drawChart(context, series, first, last, probabilityChart);
 }
 
 function drawLegend(legend) {
@@ -1988,8 +2085,10 @@ function drawLegend(legend) {
   }));
 }
 
-function drawChart({ctx, width, height}, series, first, last) {
-  const [min, max] = plotRange(series, chart !== "genetics");
+function drawChart({ctx, width, height}, series, first, last, probabilityChart) {
+  const coefficientBand = chart === "genetics" && !probabilityChart;
+  const [min, max] = plotRange(series, !coefficientBand, probabilityChart ? 0.01 : 1);
+  const formatAxis = probabilityChart ? percent.format : axisValue;
   const left = 47;
   const right = width - 13;
   const top = 9;
@@ -2005,7 +2104,7 @@ function drawChart({ctx, width, height}, series, first, last) {
   for (let mark = 0; mark <= 4; mark++) {
     const value = min + (max - min) * mark / 4;
     const position = y(value);
-    ctx.fillText(axisValue(value), left - 6, position);
+    ctx.fillText(formatAxis(value), left - 6, position);
     ctx.beginPath();
     ctx.moveTo(left, position);
     ctx.lineTo(right, position);
@@ -2021,7 +2120,7 @@ function drawChart({ctx, width, height}, series, first, last) {
   ctx.beginPath();
   ctx.rect(left - 3, top - 5, right - left + 6, bottom - top + 9);
   ctx.clip();
-  if (chart === "genetics") {
+  if (coefficientBand) {
     const upper = series[1].values;
     const lower = series[2].values;
     const lastValid = upper.findLastIndex(Number.isFinite);
@@ -2036,7 +2135,7 @@ function drawChart({ctx, width, height}, series, first, last) {
       ctx.fill();
     }
   }
-  const lines = chart === "genetics" ? series.slice(0, 1) : series;
+  const lines = coefficientBand ? series.slice(0, 1) : series;
   for (const line of lines) {
     ctx.beginPath();
     let located = false;
