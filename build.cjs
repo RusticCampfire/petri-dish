@@ -6,7 +6,7 @@ const model = require("./src/model.js");
 const root = __dirname;
 const read = name => fs.readFileSync(path.join(root, "src", name), "utf8");
 const config = {};
-for (const name of ["ACTIVITIES", "ACTIVITY_ENABLED_KEYS", "COEFFICIENTS", "DEFAULT_SETUP", "DEFAULT_PARAMS", "DEFAULT_PAUSE_TICK"]) {
+for (const name of ["ACTIVITIES", "ACTIVITY_ENABLED_KEYS", "COEFFICIENTS", "GENE_TREE", "DEFAULT_SETUP", "DEFAULT_PARAMS", "DEFAULT_PAUSE_TICK"]) {
   config[name] = model[name];
 }
 const inline = {

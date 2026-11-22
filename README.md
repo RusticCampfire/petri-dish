@@ -1,6 +1,6 @@
 # Petri Dish Evolution Simulator
 
-The current stable release is **v0.2**.
+The current stable release is **v0.3**.
 
 Petri Dish models a population evolving on a hexagonal grid. Adjust model parameters, try different food presets, inspect individual entities, and export run data as JSON.
 
@@ -16,7 +16,7 @@ Open `docs/index.html` in a browser. The simulator runs in the page.
 
 ```sh
 node build.cjs
-node --test test/model.test.cjs
+node --test test/*.test.cjs
 ```
 
 The build generates `docs/index.html`. GitHub Pages serves the current stable build from `main` at `/docs`.

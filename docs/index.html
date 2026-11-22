@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#151611">
-  <meta name="application-version" content="0.2">
+  <meta name="application-version" content="0.3">
   <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
   <title>Petri Dish Evolution Simulator</title>
+  <link id="favicon" rel="icon" type="image/png" sizes="64x64">
   <style>:root {
   color-scheme: dark;
   --background: #131411;
@@ -35,6 +36,7 @@ button:disabled, input:disabled, select:disabled { cursor: default; opacity: .5;
 [hidden] { display: none !important; }
 
 .dish-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dish-version { color: var(--soft); font: 500 .62em var(--mono); letter-spacing: 0; white-space: nowrap; }
 .brand-mark {
   position: relative;
   width: 40px;
@@ -127,14 +129,12 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 .run-notice { margin-top: 12px; color: var(--accent-bright); font-size: 12px; }
 .run-notice.error { color: var(--danger); }
 .parameters-title { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 20px; }
-.playback > .parameters-title { flex-wrap: wrap; }
 .parameters > .parameters-title { padding: 15px 14px 13px; }
-.preset-panel { display: grid; gap: 6px; padding: 10px 14px; }
-.preset-panel label { font-size: 12px; font-weight: 620; }
-.preset-panel select { width: 100%; }
+.preset-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--line); }
+.preset-row label { font-size: 12px; font-weight: 620; }
+.preset-row select { width: 100%; min-width: 0; }
 .live { display: inline-flex; align-items: center; gap: 5px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .055em; }
 .live i { width: 6px; height: 6px; }
-.pending { padding: 0 14px 10px; color: var(--accent-bright); font-size: 11px; }
 .parameter-group { border-top: 1px solid var(--line); }
 .parameter-group summary, .entity-genes summary, .observation-summary {
   display: flex;
@@ -162,6 +162,21 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 details[open] > summary::before { transform: rotate(45deg) translateY(-1px); }
 summary:hover { background: #ffffff06; }
 .summary-meta { margin-left: auto; color: var(--soft); font-size: 10px; font-weight: 450; }
+.gene-tree, .gene-tree ul { list-style: none; margin: 0; padding: 0; }
+.gene-tree { padding: 2px 13px; }
+.gene-tree ul { margin: 0 0 3px 4px; padding-left: 10px; border-left: 1px solid var(--border); }
+.gene-row { display: flex; gap: 6px; align-items: center; min-height: 30px; }
+.gene-row input { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.gene-disclosure, .gene-row label { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; text-align: left; }
+.gene-disclosure { border: 0; background: transparent; color: var(--ink); padding: 2px 0; gap: 8px; font-size: 1rem; }
+.gene-tree > li > .gene-row .gene-disclosure { font-weight: 620; }
+.gene-disclosure::before { content: ""; flex: 0 0 6px; height: 6px; box-sizing: border-box; border: solid var(--soft); border-width: 0 1px 1px 0; transform: rotate(-45deg); }
+.gene-disclosure[aria-expanded=true]::before { transform: rotate(45deg); }
+.gene-disclosure:hover, .gene-row label:hover { color: var(--accent-bright); }
+.gene-count { color: var(--muted); font: .85rem var(--mono); }
+.gene-row label { color: var(--muted); padding-left: 3px; font-size: 1rem; cursor: pointer; }
+.gene-help { font-size: .86rem; margin: 6px 0 10px; color: var(--muted); }
+.gene-reset-status { color: var(--accent-bright); }
 .knobs { padding: 0 13px 12px; }
 .knob {
   display: grid;
@@ -219,7 +234,11 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .tabs button[aria-pressed=true] { background: #3b3827; color: #f2dab2; }
 .tabs button:hover { color: var(--ink); }
 .chart-wrap { height: 158px; margin: 0 9px; }
-#history { display: block; width: 100%; height: 100%; }
+#history, #connection-history { display: block; width: 100%; height: 100%; }
+#connection-trend { border-top: 1px solid var(--line); padding-top: 6px; }
+#connection-trend .label-line { margin: 0 15px; }
+#connection-fraction { color: var(--purple); }
+.fraction-chart { height: 80px; margin: 0 9px; }
 .chart-legend { color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; min-height: 32px; padding: 1px 15px 9px; font-size: 10px; }
 .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .chart-legend i { display: inline-block; background: var(--swatch); width: 9px; height: 3px; border-radius: 3px; }
@@ -247,7 +266,13 @@ select { padding: 4px 6px; font-size: 11px; }
 .readout-grid span, .entity-values span { display: block; color: var(--muted); font-size: 10px; }
 .readout-grid strong, .entity-values strong { display: block; color: var(--ink); font: 13px var(--mono); margin-top: 4px; overflow-wrap: anywhere; }
 .readout-grid.compact { margin-top: 12px; }
-.resource-panel .readout-grid, .activity-panel .readout-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.resource-panel .readout-grid, .connection-readings { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.totals-title { font-size: 12px; margin: 12px 0 0; }
+.activity-panel .readout-grid { margin-top: 4px; }
+.activity-log { margin-top: 6px; border-top: 1px solid var(--line); }
+.activity-log summary { min-height: 25px; padding: 3px 0; color: var(--muted); font-size: 12px; }
+.activity-log ol { max-height: 9rem; overflow-y: auto; list-style: none; padding: 0; margin: 3px 0 8px; font-size: 12px; }
+.activity-log li + li { margin-top: 3px; }
 .subtle { color: var(--soft); font-size: 10px; white-space: nowrap; }
 .activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 54px 42px 28px 28px; align-items: center; gap: 4px; }
 .activity-head { align-items: end; padding: 9px 0 4px; color: var(--soft); font-size: 10px; line-height: 1.2; }
@@ -265,13 +290,35 @@ select { padding: 4px 6px; font-size: 11px; }
 #entity-select { width: 100%; }
 .entity-values { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; margin-top: 10px; }
 .population-genetics h3 { margin: 0; font-size: 12px; font-weight: 620; }
+.weight-signs { color: var(--muted); margin: 0 15px 10px; font-size: .9rem; }
+.pattern-stats { border-top: 1px solid var(--line); margin-top: 12px; }
+.pattern-stats summary { padding: 9px 0 3px; color: var(--ink); }
+.pattern-stats summary h3 { display: inline; font-size: 1rem; }
+.pattern-readings { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; padding-top: 7px; }
+.pattern-readings span { display: block; color: var(--muted); font-size: .9rem; }
+.pattern-readings strong { display: block; margin-top: 2px; color: var(--mint); font: 1.1rem var(--mono); }
+.pattern-leader { color: var(--muted); margin: 8px 0; font-size: .9rem; }
+.connection-distribution { margin: 12px 0 0; }
+.connection-distribution figcaption { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 1rem; }
+.connection-distribution output { color: var(--mint); font: .85rem var(--mono); }
+.gene-bins { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(1.1rem, 1fr); gap: 3px; overflow-x: auto; padding: 4px 2px; }
+.gene-bins button { display: grid; grid-template-rows: 42px auto; gap: 3px; align-items: end; justify-items: stretch; position: relative; padding: 0; color: var(--muted); border: 0; background: transparent; font: .85rem var(--mono); }
+.gene-bins button::before { content: ""; grid-area: 1 / 1; align-self: stretch; background: var(--panel-top); border-bottom: 1px solid var(--border); }
+.gene-bins i { grid-area: 1 / 1; background: #91a375; height: var(--height,0%); z-index: 1; }
+.gene-bins button[aria-pressed=true], .gene-bins button:hover { color: var(--accent-bright); }
+.gene-bins button[aria-pressed=true] i { background: var(--accent); }
+.gene-bins button:focus-visible { outline-offset: -2px; }
 .entity-genes { border-top: 1px solid var(--line); margin-top: 10px; }
+.connection-count { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.connection-readings small { color: var(--muted); }
 .entity-genes summary { padding: 7px 0; min-height: 29px; font-size: 11px; }
 .table-scroll { overflow-x: auto; }
 .coefficient-table { width: 100%; border-collapse: collapse; font-size: 10px; }
 .coefficient-table th, .coefficient-table td { padding: 3px 2px; text-align: right; border-bottom: 1px solid var(--line); }
 .coefficient-table th:first-child { text-align: left; }
 .coefficient-table td { font-family: var(--mono); white-space: nowrap; }
+.coefficient-table td small { display: block; color: var(--muted); font: 0.86rem/1.3 var(--mono); }
+.coefficient-table td small:empty { display: none; }
 .coefficient-table thead th { color: var(--muted); }
 .population-genetics .coefficient-table { font-size: 11px; }
 .population-genetics td:last-child, .entity-genes td:nth-child(2) { color: var(--mint); }
@@ -290,8 +337,7 @@ select { padding: 4px 6px; font-size: 11px; }
   .left-rail { display: contents; }
   .playback { grid-row: 1; }
   .center { grid-row: 2; }
-  .preset-panel { grid-row: 3; }
-  .parameters { grid-row: 4; }
+  .parameters { grid-row: 3; }
   .right-rail { grid-column: 1; gap: 12px; }
   .timing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; }
   .timing .label-line { grid-row: 1; }
@@ -313,13 +359,10 @@ select { padding: 4px 6px; font-size: 11px; }
 <body>
   <main class="desk" aria-label="Simulation workspace">
     <section class="left-rail" aria-label="Controls">
-      <div class="panel playback">
-        <div class="parameters-title">
-          <h2>Run controls</h2>
-          <span id="run-status" class="status">
-            <i aria-hidden="true"></i><span><span id="run-status-text" role="status">Ready</span><span id="run-tick-rate" hidden></span></span>
-          </span>
-        </div>
+      <section class="panel playback" aria-label="Run controls">
+        <span id="run-status" class="status">
+          <i aria-hidden="true"></i><span><span id="run-status-text" role="status">Ready</span><span id="run-tick-rate" hidden></span></span>
+        </span>
         <div class="transport">
           <button type="button" id="play" class="button primary" disabled><span class="icon icon-play" aria-hidden="true"></span><span>Start</span></button>
           <button type="button" id="step" class="button square" title="Advance one tick" aria-label="Advance one tick" disabled><span class="icon icon-step" aria-hidden="true"></span></button>
@@ -341,20 +384,19 @@ select { padding: 4px 6px; font-size: 11px; }
           </div>
         </details>
         <p id="run-notice" class="run-notice" hidden></p>
-      </div>
-
-      <div class="panel preset-panel">
-        <label for="model-preset">Presets</label>
-        <select id="model-preset">
-          <option value="" disabled hidden>Custom</option>
-          <option value="default" selected>Default</option>
-          <option value="scarce-food">Scarce food, high deviation</option>
-        </select>
-      </div>
+      </section>
 
       <div class="panel parameters">
         <div class="parameters-title"><h2>Model parameters</h2><span class="live"><i></i> Live</span></div>
-        <p id="pending-note" class="pending" role="status" hidden>Changes apply on the next tick.</p>
+        <div class="preset-row">
+          <label for="model-preset">Presets</label>
+          <select id="model-preset">
+            <option value="" disabled hidden>Custom</option>
+            <option value="default" selected>Default</option>
+            <option value="scarce-food">Scarce food, high deviation</option>
+          </select>
+        </div>
+        <div class="parameter-group gene-controls"><ul id="gene-tree" class="gene-tree" aria-label="Starting gene switches"></ul></div>
         <div id="runtime-controls"></div>
         <details class="parameter-group setup-group">
           <summary><span>Initial setup</span><span id="setup-state" class="summary-meta">New run</span></summary>
@@ -376,7 +418,7 @@ select { padding: 4px 6px; font-size: 11px; }
         <div class="section-head">
           <div class="dish-brand">
             <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <div><h1>Petri Dish Evolution Simulator</h1><p id="dish-caption">91 hexes · Radius 5</p></div>
+            <div><h1>Petri Dish Evolution Simulator <span class="dish-version">v0.3</span></h1><p id="dish-caption">91 hexes · Radius 5</p></div>
           </div>
           <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
         </div>
@@ -400,17 +442,41 @@ select { padding: 4px 6px; font-size: 11px; }
           </div>
         </div>
         <div id="gene-select-row" class="gene-choice">
-          <label for="gene-select">Activity metric</label><select id="gene-select"></select>
+          <label for="gene-select">Genetics metric</label><select id="gene-select"></select>
         </div>
         <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
         <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
+        <div id="connection-trend" hidden>
+          <div class="label-line"><span>Connection ON</span><output id="connection-fraction"></output></div>
+          <div class="fraction-chart"><canvas id="connection-history" role="img" aria-label="Fraction of living entities with the connection ON"></canvas></div>
+          <p class="weight-signs" id="weight-signs"></p>
+        </div>
         <section id="population-genetics" class="population-genetics" aria-labelledby="population-genetics-title">
           <div class="parameters-title">
             <h3 id="population-genetics-title">Population averages</h3>
             <span id="population-decision-count" class="subtle"></span>
           </div>
           <div id="population-genes-table" class="table-scroll"></div>
-          <p class="note">Coefficients cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+          <p class="note">Weight means cover entities with that connection ON. Biases cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+          <div class="readout-grid connection-readings">
+            <div><span>ON per entity</span><strong id="mean-stored-connections">—</strong></div>
+            <div title="ON connections belonging to enabled activities"><span>Effective per entity</span><strong id="mean-effective-connections">—</strong></div>
+            <div title="Total connection maintenance paid during persistence, before reproduction"><span>Upkeep paid this tick</span><strong id="connection-upkeep">—</strong><small id="maintained-connections"></small></div>
+          </div>
+          <details class="pattern-stats" open>
+            <summary><h3>Switch pattern diversity</h3></summary>
+            <div class="pattern-readings">
+              <div><span>Distinct patterns</span><strong id="distinct-patterns">—</strong></div>
+              <div title="Inverse Simpson diversity. Two equally common patterns give an effective count of two."><span>Effective patterns</span><strong id="effective-patterns">—</strong></div>
+              <div><span>Largest share</span><strong id="dominant-share">—</strong></div>
+            </div>
+            <p id="leading-pattern" class="pattern-leader"></p>
+            <figure class="connection-distribution">
+              <figcaption><span>ON connections per entity</span><output id="histogram-value"></output></figcaption>
+              <div id="gene-histogram" class="gene-bins" role="group" aria-label="Living entities by number of ON connections"></div>
+            </figure>
+            <p class="note">Patterns use all stored switches, including excluded activities. The effective count gives more weight to common patterns.</p>
+          </details>
         </section>
       </div>
     </section>
@@ -420,11 +486,14 @@ select { padding: 4px 6px; font-size: 11px; }
         <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
         <div class="activity-head"><span>Activity</span><span>Mean probability</span><span>Selected</span><span>Tried</span><span>Done</span></div>
         <div id="activity-list"></div>
+        <details class="activity-log"><summary title="Show activity settings by tick"><span id="excluded-status">All activities enabled</span></summary><ol id="exclusion-history" aria-label="Activity settings by tick"></ol></details>
         <p class="note">Reproduction can skip selected activities.</p>
+        <h3 class="totals-title">Run totals</h3>
         <div class="readout-grid compact">
           <div><span>Sudden deaths</span><strong id="deaths-sudden">—</strong></div>
           <div><span>Persistence deaths</span><strong id="deaths-persistence">—</strong></div>
-          <div><span>Mutations</span><strong id="mutations">—</strong></div>
+          <div><span>Numerical mutations</span><strong id="mutations">—</strong></div>
+          <div><span>Switch flips</span><strong id="switch-flips">—</strong></div>
         </div>
       </div>
 
@@ -444,6 +513,7 @@ select { padding: 4px 6px; font-size: 11px; }
             <div><span>Waste</span><strong id="entity-waste"></strong></div>
           </div>
           <div class="note" id="entity-origin"></div>
+          <div class="connection-count" id="entity-connections"></div>
           <details class="entity-genes" open>
             <summary>Decision coefficients <span id="entity-decision-tick" class="summary-meta"></span></summary>
             <div id="entity-genes-table" class="table-scroll" role="region" aria-label="Decision coefficients and probabilities" tabindex="0"></div>
@@ -471,7 +541,7 @@ select { padding: 4px 6px; font-size: 11px; }
   <script type="text/plain" id="worker-source">"use strict";
 
 const Petri = (() => {
-  const VERSION = "0.2";
+  const VERSION = "0.3";
   const ACTIVITY_NAMES = {
     excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
     movementEnabled: "Movement", reproductionEnabled: "Reproduction",
@@ -479,16 +549,35 @@ const Petri = (() => {
   const ACTIVITIES = Object.values(ACTIVITY_NAMES);
   const ACTIVITY_ENABLED_KEYS = Object.keys(ACTIVITY_NAMES);
   const COEFFICIENTS = ["Bias", "Mass", "Energy", "Waste"];
+  const GENE_TREE = {
+    label: "Gene switches",
+    children: ACTIVITIES.map((activity, a) => ({
+      label: activity,
+      children: COEFFICIENTS.slice(1).map((input, j) => ({
+        label: input, key: activity.toLowerCase() + "." + input.toLowerCase(),
+        coefficient: a * COEFFICIENTS.length + j + 1,
+      })),
+    })),
+  };
+  function connectionLeaves(node) {
+    return node.children ? node.children.flatMap(connectionLeaves) : [node];
+  }
+  const CONNECTIONS = connectionLeaves(GENE_TREE);
+  // Pack small patterns as exact integers. Longer trees use full bit strings without truncation.
+  const NUMERIC_PATTERN = CONNECTIONS.length <= 53;
+  const INPUT_AT = new Array(ACTIVITIES.length * COEFFICIENTS.length).fill(-1);
+  CONNECTIONS.forEach((gene, index) => { INPUT_AT[gene.coefficient] = index; });
   const DEFAULT_SETUP = Object.freeze({
     radius: 5, founders: 30, initialMass: 10, initialEnergy: 40, initialWaste: 0,
     initialFood: 0, biasLow: -3, biasHigh: -1.5, weightRange: 0.01,
+    startingGeneSwitches: Object.freeze(Object.fromEntries(CONNECTIONS.map(({key}) => [key, true]))),
   });
   const DEFAULT_PARAMS = Object.freeze({
-    foodMean: 3, foodSD: 1.5, intake: 0.35, energyPerFood: 1, energyWasteRatio: 2,
-    foodPerMass: 1, energyCapacity: 8, wasteCapacity: 4, persistence: 0.15,
+    foodMean: 2, foodSD: 1.5, intake: 0.35, energyPerFood: 1, energyWasteRatio: 2,
+    foodPerMass: 1, energyCapacity: 8, wasteCapacity: 4, persistence: 0.15, connectionCost: 0.01,
     excretionRate: 1.2, excretionCost: 0.05, growthFraction: 0.1, shrinkFraction: 0.1,
     growthSpread: 0.2, movementCost: 0.02, reproductionCost: 2, divisionLoss: 0.1,
-    offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, mutationWidth: 0.2,
+    offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, switchMutationRate: 0.001, mutationWidth: 0.2,
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
     ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
@@ -589,20 +678,42 @@ const Petri = (() => {
     return logit < 0 ? rare : !rare;
   }
 
+  function initialWeight(range, random) {
+    return range * (2 * random.unit() - 1);
+  }
+
+  // A null input slot is the inherited OFF state. There is no dormant weight.
+  // Bias slots and ON inputs always contain a finite number, including zero.
+  function enabledConnectionCount(genes, enabled) {
+    let count = 0;
+    for (let activity = 0; activity < enabled.length; activity++) {
+      if (!enabled[activity]) continue;
+      const offset = activity * COEFFICIENTS.length;
+      for (let j = 1; j < COEFFICIENTS.length; j++) {
+        if (genes[offset + j] !== null) count++;
+      }
+    }
+    return count;
+  }
+
   function dotProduct(entity, offset) {
     const genes = entity.genes;
     const bias = genes[offset];
     const massWeight = genes[offset + 1];
     const energyWeight = genes[offset + 2];
     const wasteWeight = genes[offset + 3];
-    const sum = bias + massWeight * entity.mass + energyWeight * entity.energy + wasteWeight * entity.waste;
+    const sum = bias
+      + (massWeight === null ? 0 : massWeight * entity.mass)
+      + (energyWeight === null ? 0 : energyWeight * entity.energy)
+      + (wasteWeight === null ? 0 : wasteWeight * entity.waste);
     if (Number.isFinite(sum)) return sum;
-    const weightScale = Math.max(Math.abs(bias), Math.abs(massWeight), Math.abs(energyWeight), Math.abs(wasteWeight));
-    const stateScale = Math.max(1, entity.mass, entity.energy, entity.waste);
+    const weightScale = Math.max(Math.abs(bias), Math.abs(massWeight ?? 0), Math.abs(energyWeight ?? 0), Math.abs(wasteWeight ?? 0));
+    const stateScale = Math.max(1, massWeight === null ? 0 : entity.mass,
+      energyWeight === null ? 0 : entity.energy, wasteWeight === null ? 0 : entity.waste);
     const scaled = (bias / weightScale) / stateScale
-      + (massWeight / weightScale) * (entity.mass / stateScale)
-      + (energyWeight / weightScale) * (entity.energy / stateScale)
-      + (wasteWeight / weightScale) * (entity.waste / stateScale);
+      + (massWeight === null ? 0 : (massWeight / weightScale) * (entity.mass / stateScale))
+      + (energyWeight === null ? 0 : (energyWeight / weightScale) * (entity.energy / stateScale))
+      + (wasteWeight === null ? 0 : (wasteWeight / weightScale) * (entity.waste / stateScale));
     return (scaled * weightScale) * stateScale;
   }
 
@@ -677,19 +788,25 @@ const Petri = (() => {
 
   function tickStats() {
     return {
-      births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0,
+      births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0, switchFlips: 0,
+      maintainedConnections: 0, connectionMaintenancePaid: 0,
       foodProduced: 0, foodConsumed: 0, foodRecycled: 0,
       activities: ACTIVITIES.map(() => ({selected: 0, attempted: 0, succeeded: 0})),
       decisionCount: 0, meanDecisionProbabilities: ACTIVITIES.map(() => null),
     };
   }
 
-  function entityState(entity) {
+  function entityState(entity, enabled, tick) {
+    const connectionSwitches = entity.genes.filter((_, i) => i % COEFFICIENTS.length !== 0)
+      .map(weight => weight !== null);
     return {
       id: entity.id, parentId: entity.parentId, founderId: entity.founderId,
       generation: entity.generation, born: entity.born, cell: entity.cell,
       mass: entity.mass, surface: entity.surface, energy: entity.energy, waste: entity.waste,
-      coefficients: Array.from(entity.genes),
+      coefficients: entity.genes.slice(), connectionSwitches,
+      activeConnections: connectionSwitches.filter(Boolean).length,
+      effectiveActiveConnections: enabledConnectionCount(entity.genes, enabled),
+      lastDecisionTick: entity.lastDecisionProbabilities ? tick : null,
       lastDecisionProbabilities: entity.lastDecisionProbabilities
         ? Array.from(entity.lastDecisionProbabilities) : null,
     };
@@ -699,6 +816,8 @@ const Petri = (() => {
     constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed} = {}) {
       this.params = {...DEFAULT_PARAMS, ...params};
       this.setup = {...DEFAULT_SETUP, ...setup};
+      this.setup.startingGeneSwitches = {...DEFAULT_SETUP.startingGeneSwitches, ...setup.startingGeneSwitches};
+      this.appliedGeneSwitches = {...this.setup.startingGeneSwitches};
       this.entropy = entropy;
       this.globalSeed = seed ? new Uint32Array(seed) : entropy(new Uint32Array(4));
       this.tickSalt = new Uint32Array(4);
@@ -711,7 +830,8 @@ const Petri = (() => {
       this.entities = [];
       this.history = [];
       this.parameterChanges = [];
-      this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0};
+      this.geneSwitchChanges = [];
+      this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0, switchFlips: 0};
       this.recentLifespans = [];
       this.lifespanSum = 0;
       this.nextLifespanIndex = 0;
@@ -730,11 +850,14 @@ const Petri = (() => {
       for (let i = 0; i < founders; i++) {
         const chosen = i + Math.floor(this.random.unit() * (places.length - i));
         [places[i], places[chosen]] = [places[chosen], places[i]];
-        const genes = new Float64Array(ACTIVITIES.length * COEFFICIENTS.length);
-        for (let offset = 0; offset < genes.length; offset += 4) {
+        const genes = new Array(ACTIVITIES.length * COEFFICIENTS.length);
+        for (let offset = 0; offset < genes.length; offset += COEFFICIENTS.length) {
           genes[offset] = biasLow + this.random.unit() * (biasHigh - biasLow);
-          for (let weight = 1; weight < 4; weight++) {
-            genes[offset + weight] = weightRange * (2 * this.random.unit() - 1);
+          for (let weight = 1; weight < COEFFICIENTS.length; weight++) {
+            const index = offset + weight;
+            // Keep positions, biases and unrelated weights stable while editing the seeded preview.
+            const drawn = initialWeight(weightRange, this.random);
+            genes[index] = this.setup.startingGeneSwitches[CONNECTIONS[INPUT_AT[index]].key] ? drawn : null;
           }
         }
         this.entities.push(this.makeEntity(places[i], initialMass, energy, waste, genes));
@@ -751,6 +874,10 @@ const Petri = (() => {
       };
     }
 
+    enabledActivities() {
+      return ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
+    }
+
     applyParameters(changes) {
       const actual = {};
       for (const key of Object.keys(changes)) {
@@ -759,6 +886,29 @@ const Petri = (() => {
         actual[key] = changes[key];
       }
       if (Object.keys(actual).length) this.parameterChanges.push({tick: this.tick + 1, values: actual});
+    }
+
+    resetGeneSwitches(settings) {
+      const targets = CONNECTIONS.filter(({key}) => typeof settings[key] === "boolean");
+      if (!targets.length) return;
+      const values = {};
+      let weightsDrawn = 0;
+      let weightsRemoved = 0;
+      for (const {key, coefficient} of targets) {
+        const on = settings[key];
+        values[key] = on;
+        this.appliedGeneSwitches[key] = on;
+        for (const entity of this.entities) {
+          if (on) {
+            entity.genes[coefficient] = initialWeight(this.setup.weightRange, this.random);
+            weightsDrawn++;
+          } else {
+            if (entity.genes[coefficient] !== null) weightsRemoved++;
+            entity.genes[coefficient] = null;
+          }
+        }
+      }
+      this.geneSwitchChanges.push({tick: this.tick, values, population: this.entities.length, weightsDrawn, weightsRemoved});
     }
 
     recordDeath(entity) {
@@ -770,11 +920,12 @@ const Petri = (() => {
       this.cells[entity.cell].released += entity.mass;
     }
 
-    step() {
+    step(geneSwitchResets) {
       this.tick++;
       this.entropy(this.tickSalt);
       this.random.reseed(this.globalSeed, this.tickSalt);
       this.stats = tickStats();
+      if (geneSwitchResets) this.resetGeneSwitches(geneSwitchResets);
       for (const cell of this.cells) cell.feeders.length = 0;
 
       // 1. Sudden death.
@@ -802,19 +953,23 @@ const Petri = (() => {
         this.stats.foodConsumed += feedCell(cell, this.params, wastePerFood);
       }
       this.entities = [];
+      const enabled = this.enabledActivities();
       for (const entity of feeding) {
-        const cost = this.params.persistence * entity.mass;
+        const connections = enabledConnectionCount(entity.genes, enabled);
+        const upkeep = this.params.connectionCost * connections;
+        const cost = this.params.persistence * entity.mass + upkeep;
         if (entity.energy < cost) {
           this.stats.persistenceDeaths++;
           this.recordDeath(entity);
         } else {
           entity.energy -= cost;
+          this.stats.maintainedConnections += connections;
+          this.stats.connectionMaintenancePaid += upkeep;
           this.entities.push(entity);
         }
       }
 
       // 5. Decisions use the same pre-execution state within each entity.
-      const enabled = ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
       const anyEnabled = enabled.some(Boolean);
       const probabilitySums = new Float64Array(ACTIVITIES.length);
       for (const entity of this.entities) {
@@ -869,7 +1024,7 @@ const Petri = (() => {
       }
       for (const key of Object.keys(this.totals)) this.totals[key] += this.stats[key];
       this.peakPopulation = Math.max(this.peakPopulation, this.entities.length);
-      return this.record();
+      return this.record(enabled);
     }
 
     execute(activity, entity, newborns) {
@@ -956,36 +1111,66 @@ const Petri = (() => {
 
     inherit(original) {
       const genes = original.slice();
-      if (this.params.mutationRate === 0 || this.params.mutationWidth === 0) return genes;
-      for (let i = 0; i < genes.length; i++) {
-        const activity = Math.floor(i / COEFFICIENTS.length);
+      const {mutationRate, mutationWidth, switchMutationRate} = this.params;
+      const mutateNumbers = mutationRate > 0 && mutationWidth > 0;
+      if (!mutateNumbers && switchMutationRate === 0) return genes;
+      for (let activity = 0; activity < ACTIVITIES.length; activity++) {
         if (!this.params[ACTIVITY_ENABLED_KEYS[activity]]) continue;
-        if (this.random.unit() >= this.params.mutationRate) continue;
-        const mutated = mutateValue(genes[i], this.params, this.random);
-        if (mutated !== genes[i]) this.stats.mutations++;
-        genes[i] = mutated;
+        for (let j = 0; j < COEFFICIENTS.length; j++) {
+          const i = activity * COEFFICIENTS.length + j;
+          if (j !== 0 && switchMutationRate > 0 && this.random.unit() < switchMutationRate) {
+            genes[i] = original[i] === null ? initialWeight(this.setup.weightRange, this.random) : null;
+            this.stats.switchFlips++;
+            continue;
+          }
+          if (genes[i] === null || !mutateNumbers || this.random.unit() >= mutationRate) continue;
+          const mutated = mutateValue(genes[i], this.params, this.random);
+          if (mutated !== genes[i]) this.stats.mutations++;
+          genes[i] = mutated;
+        }
       }
       return genes;
     }
 
-    record() {
+    record(enabled = this.enabledActivities()) {
       const population = this.entities.length;
       const geneLength = ACTIVITIES.length * COEFFICIENTS.length;
       const genes = Array.from({length: geneLength}, () => [0, 0, Infinity, -Infinity]);
       const scales = new Float64Array(geneLength);
+      const sampleCounts = new Array(geneLength).fill(0);
+      const patternCounts = new Map();
+      const connectionHistogram = new Array(CONNECTIONS.length + 1).fill(0);
+      const weightSigns = {
+        negative: new Array(CONNECTIONS.length).fill(0),
+        zero: new Array(CONNECTIONS.length).fill(0),
+        positive: new Array(CONNECTIONS.length).fill(0),
+      };
       let energy = 0;
       let waste = 0;
       let mass = 0;
-      let count = 0;
       let generation = 0;
       for (const entity of this.entities) {
-        count++;
         energy += entity.energy;
         waste += entity.waste;
         mass += entity.mass;
         generation = Math.max(generation, entity.generation);
+        let pattern = NUMERIC_PATTERN ? 0 : "";
+        let stored = 0;
         for (let i = 0; i < geneLength; i++) {
           const value = entity.genes[i];
+          const input = INPUT_AT[i];
+          if (input !== -1) {
+            const bit = value === null ? 0 : 1;
+            pattern = NUMERIC_PATTERN ? pattern * 2 + bit : pattern + bit;
+            if (value !== null) {
+              stored++;
+              if (value > 0) weightSigns.positive[input]++;
+              else if (value < 0) weightSigns.negative[input]++;
+              else weightSigns.zero[input]++;
+            }
+          }
+          if (value === null) continue;
+          const count = ++sampleCounts[i];
           const distribution = genes[i];
           const magnitude = Math.abs(value);
           if (magnitude > scales[i]) {
@@ -1001,12 +1186,41 @@ const Petri = (() => {
           distribution[2] = Math.min(distribution[2], value);
           distribution[3] = Math.max(distribution[3], value);
         }
+        connectionHistogram[stored]++;
+        patternCounts.set(pattern, (patternCounts.get(pattern) ?? 0) + 1);
       }
+      let sumSquares = 0;
+      let largestPattern = 0;
+      let leadingPattern = null;
+      let leadingPatternCount = 0;
+      for (const [pattern, count] of patternCounts) {
+        sumSquares += count * count;
+        if (count > largestPattern) {
+          largestPattern = count;
+          leadingPattern = pattern;
+          leadingPatternCount = 1;
+        } else if (count === largestPattern) {
+          leadingPatternCount++;
+          leadingPattern = null;
+        }
+      }
+      if (leadingPattern !== null && NUMERIC_PATTERN) {
+        leadingPattern = leadingPattern.toString(2).padStart(CONNECTIONS.length, "0");
+      }
+      const connectionOnFractions = [];
+      let activeConnections = 0;
+      let effectiveActiveConnections = 0;
       for (let i = 0; i < geneLength; i++) {
         const distribution = genes[i];
-        if (population) {
+        const count = sampleCounts[i];
+        if (i % COEFFICIENTS.length !== 0) {
+          connectionOnFractions.push(population ? count / population : null);
+          activeConnections += count;
+          if (enabled[Math.floor(i / COEFFICIENTS.length)]) effectiveActiveConnections += count;
+        }
+        if (count) {
           distribution[0] *= scales[i];
-          distribution[1] = Math.sqrt(Math.min(1, Math.max(0, distribution[1]) / population)) * scales[i];
+          distribution[1] = Math.sqrt(Math.min(1, Math.max(0, distribution[1]) / count)) * scales[i];
         } else {
           distribution.fill(null);
         }
@@ -1021,6 +1235,13 @@ const Petri = (() => {
       const lifespanSamples = this.recentLifespans.length;
       const result = {
         tick: this.tick, population, food, mass, energy, waste, generation, genes,
+        activeConnections, effectiveActiveConnections, connectionOnFractions,
+        connectionHistogram, weightSigns,
+        distinctPatterns: patternCounts.size, effectivePatterns: population ? population * population / sumSquares : null,
+        dominantPatternShare: population ? largestPattern / population : null,
+        leadingPattern, leadingPatternCount,
+        geneSwitchReset: this.geneSwitchChanges.at(-1)?.tick === this.tick,
+        excludedActivities: ACTIVITIES.filter((_, i) => !enabled[i]),
         lifespanSamples, meanLifespan: lifespanSamples ? this.lifespanSum / lifespanSamples : null,
         energyCapacity, wasteCapacity,
         peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
@@ -1034,7 +1255,7 @@ const Petri = (() => {
       const selected = occupants.find(entity => entity.id === entityId) ?? occupants[0];
       return {
         cell, food: this.cells[cell]?.food, ids: occupants.map(entity => entity.id),
-        entity: selected ? entityState(selected) : null,
+        entity: selected ? entityState(selected, this.enabledActivities(), this.tick) : null,
       };
     }
 
@@ -1049,12 +1270,32 @@ const Petri = (() => {
     }
 
     exportResults() {
+      const enabled = this.enabledActivities();
       return {
         model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
         setup: this.setup, initialParameters: this.initialParams, appliedParameters: this.params,
+        appliedGeneSwitches: this.appliedGeneSwitches, geneSwitchChanges: this.geneSwitchChanges,
         parameterChanges: this.parameterChanges, activityOrder: ACTIVITIES, coefficientOrder: COEFFICIENTS,
+        connectionInputOrder: COEFFICIENTS.slice(1),
+        genetics: {
+          connectionOrder: "Activity order, then connection input order. An OFF weight is null.",
+          activationDistribution: "Uniform from -setup.weightRange to +setup.weightRange",
+          geneSwitchChanges: "Manual resets apply at the start of the listed tick to every then-living entity. ON draws a fresh weight, OFF removes it. Subsequent inheritance can change either state.",
+          patterns: "Distinct sets of stored ON inputs, including those in excluded activities. Numeric weight and bias values do not affect pattern identity.",
+          effectivePatterns: "Inverse Simpson diversity (one divided by the sum of squared pattern frequencies)",
+          dominantPatternShare: "Fraction of living entities carrying the most frequent stored switch pattern",
+          leadingPattern: "ON/OFF bit string in connection order when there is one most frequent pattern. leadingPatternCount reports ties.",
+          connectionHistogram: "Each bin counts living entities with that many stored ON inputs",
+          weightSigns: "Counts among living carriers for each input, in connection order. An ON weight of zero counts as zero.",
+          mutations: "Numerical changes to copied biases and surviving ON weights",
+          switchFlips: "Inherited switches that changed state, including newly created weights",
+          activeConnections: "Stored ON inputs at the end of the tick, including newborns",
+          effectiveActiveConnections: "Stored ON inputs in enabled activities at the end of the tick",
+          maintainedConnections: "Effective ON inputs of entities that paid persistence, before decisions and reproduction",
+          connectionMaintenancePaid: "Total energy paid for effective ON inputs at the persistence stage of this tick",
+        },
         coefficientStatistics: ["mean", "populationStandardDeviation", "minimum", "maximum"],
-        history: this.history, entities: this.entities.map(entityState),
+        history: this.history, entities: this.entities.map(entity => entityState(entity, enabled, this.tick)),
         cells: this.cells.map(({q, r, food}) => ({q, r, food})),
       };
     }
@@ -1062,7 +1303,7 @@ const Petri = (() => {
 
   return {
     VERSION,
-    Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
+    Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
     Random, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
   };
 })();
@@ -1088,6 +1329,7 @@ let nextTick = 0;
 let lastFrame = 0;
 let tickRateSample = null;
 let pending = {};
+let pendingGenes = null;
 let watch = {cell: 45, entityId: null, token: 0};
 
 function publish({debug = false, replaceHistory = false} = {}) {
@@ -1139,9 +1381,12 @@ function advance() {
   if (Object.keys(pending).length) {
     simulation.applyParameters(pending);
     pending = {};
-    postMessage({type: "applied", runId, params: simulation.params});
   }
-  simulation.step();
+  simulation.step(pendingGenes?.values);
+  if (pendingGenes) {
+    postMessage({type: "genes-applied", runId, revision: pendingGenes.revision, change: simulation.geneSwitchChanges.at(-1)});
+    pendingGenes = null;
+  }
   if (pauseAtTick > 0 && simulation.tick === pauseAtTick) {
     stop();
     return true;
@@ -1195,6 +1440,7 @@ self.onmessage = ({data}) => {
       pauseAtTick = data.pauseAtTick ?? DEFAULT_PAUSE_TICK;
       failure = false;
       pending = {};
+      pendingGenes = null;
       watch = data.watch;
       speed = data.speed;
       refresh = data.refresh;
@@ -1222,6 +1468,20 @@ self.onmessage = ({data}) => {
           publish({replaceHistory: true});
         } else {
           Object.assign(pending, data.values);
+        }
+        break;
+      case "gene-switches":
+        if (!running && !simulation.tick && !failure) {
+          simulation = new Simulation({
+            setup: {...simulation.setup, startingGeneSwitches: {...simulation.setup.startingGeneSwitches, ...data.values}},
+            params: simulation.params, seed: simulation.globalSeed,
+          });
+          publish({replaceHistory: true});
+          postMessage({type: "genes-applied", runId, revision: data.revision});
+        } else {
+          pendingGenes ??= {values: {}, revision: 0};
+          Object.assign(pendingGenes.values, data.values);
+          pendingGenes.revision = data.revision;
         }
         break;
       case "display":
@@ -1285,10 +1545,10 @@ self.onmessage = ({data}) => {
   }
 };
 </script>
-  <script>const CONFIG = {"ACTIVITIES":["Excretion","Growth","Shrinking","Movement","Reproduction"],"ACTIVITY_ENABLED_KEYS":["excretionEnabled","growthEnabled","shrinkingEnabled","movementEnabled","reproductionEnabled"],"COEFFICIENTS":["Bias","Mass","Energy","Waste"],"DEFAULT_SETUP":{"radius":5,"founders":30,"initialMass":10,"initialEnergy":40,"initialWaste":0,"initialFood":0,"biasLow":-3,"biasHigh":-1.5,"weightRange":0.01},"DEFAULT_PARAMS":{"foodMean":3,"foodSD":1.5,"intake":0.35,"energyPerFood":1,"energyWasteRatio":2,"foodPerMass":1,"energyCapacity":8,"wasteCapacity":4,"persistence":0.15,"excretionRate":1.2,"excretionCost":0.05,"growthFraction":0.1,"shrinkFraction":0.1,"growthSpread":0.2,"movementCost":0.02,"reproductionCost":2,"divisionLoss":0.1,"offspringShare":0.5,"suddenDeath":0.002,"mutationRate":0.01,"mutationWidth":0.2,"mutationSharpness":16,"mutationTail":3,"mutateParent":false,"excretionEnabled":true,"growthEnabled":true,"shrinkingEnabled":true,"movementEnabled":true,"reproductionEnabled":true},"DEFAULT_PAUSE_TICK":0};
+  <script>const CONFIG = {"ACTIVITIES":["Excretion","Growth","Shrinking","Movement","Reproduction"],"ACTIVITY_ENABLED_KEYS":["excretionEnabled","growthEnabled","shrinkingEnabled","movementEnabled","reproductionEnabled"],"COEFFICIENTS":["Bias","Mass","Energy","Waste"],"GENE_TREE":{"label":"Gene switches","children":[{"label":"Excretion","children":[{"label":"Mass","key":"excretion.mass","coefficient":1},{"label":"Energy","key":"excretion.energy","coefficient":2},{"label":"Waste","key":"excretion.waste","coefficient":3}]},{"label":"Growth","children":[{"label":"Mass","key":"growth.mass","coefficient":5},{"label":"Energy","key":"growth.energy","coefficient":6},{"label":"Waste","key":"growth.waste","coefficient":7}]},{"label":"Shrinking","children":[{"label":"Mass","key":"shrinking.mass","coefficient":9},{"label":"Energy","key":"shrinking.energy","coefficient":10},{"label":"Waste","key":"shrinking.waste","coefficient":11}]},{"label":"Movement","children":[{"label":"Mass","key":"movement.mass","coefficient":13},{"label":"Energy","key":"movement.energy","coefficient":14},{"label":"Waste","key":"movement.waste","coefficient":15}]},{"label":"Reproduction","children":[{"label":"Mass","key":"reproduction.mass","coefficient":17},{"label":"Energy","key":"reproduction.energy","coefficient":18},{"label":"Waste","key":"reproduction.waste","coefficient":19}]}]},"DEFAULT_SETUP":{"radius":5,"founders":30,"initialMass":10,"initialEnergy":40,"initialWaste":0,"initialFood":0,"biasLow":-3,"biasHigh":-1.5,"weightRange":0.01,"startingGeneSwitches":{"excretion.mass":true,"excretion.energy":true,"excretion.waste":true,"growth.mass":true,"growth.energy":true,"growth.waste":true,"shrinking.mass":true,"shrinking.energy":true,"shrinking.waste":true,"movement.mass":true,"movement.energy":true,"movement.waste":true,"reproduction.mass":true,"reproduction.energy":true,"reproduction.waste":true}},"DEFAULT_PARAMS":{"foodMean":2,"foodSD":1.5,"intake":0.35,"energyPerFood":1,"energyWasteRatio":2,"foodPerMass":1,"energyCapacity":8,"wasteCapacity":4,"persistence":0.15,"connectionCost":0.01,"excretionRate":1.2,"excretionCost":0.05,"growthFraction":0.1,"shrinkFraction":0.1,"growthSpread":0.2,"movementCost":0.02,"reproductionCost":2,"divisionLoss":0.1,"offspringShare":0.5,"suddenDeath":0.002,"mutationRate":0.01,"switchMutationRate":0.001,"mutationWidth":0.2,"mutationSharpness":16,"mutationTail":3,"mutateParent":false,"excretionEnabled":true,"growthEnabled":true,"shrinkingEnabled":true,"movementEnabled":true,"reproductionEnabled":true},"DEFAULT_PAUSE_TICK":0};
 "use strict";
 
-const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
+const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
 const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
 const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
 const CHART_WINDOW = 5000;
@@ -1308,6 +1568,8 @@ const percent = new Intl.NumberFormat("en", {style: "percent", maximumFractionDi
 const compact = new Intl.NumberFormat("en", {notation: "compact", maximumFractionDigits: 1});
 const exact = value => value === 0 ? "0" : value.toPrecision(3);
 const controls = new Map();
+const switchRows = [];
+const histogramBins = [];
 
 const GROUPS = [
   ["Environment", true, [
@@ -1323,6 +1585,7 @@ const GROUPS = [
     ["energyCapacity", "Energy capacity", "E/M", 0, 16, 0.1],
     ["wasteCapacity", "Waste capacity", "W/M", 0, 10, 0.1],
     ["persistence", "Persistence cost", "E/M", 0, 1, 0.005],
+    ["connectionCost", "Connection maintenance", "E/ON/tick", 0, 0.1, 0.001],
     ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
     ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
   ]],
@@ -1336,7 +1599,8 @@ const GROUPS = [
     ["offspringShare", "Offspring share", "%", 1, 99, 1, {scale: 100, min: 0.01, max: 99.99}],
   ]],
   ["Inheritance", false, [
-    ["mutationRate", "Mutation chance", "%", 0, 20, 0.1, {scale: 100, max: 100}],
+    ["mutationRate", "Numerical copying error (μw)", "%", 0, 20, 0.1, {scale: 100, max: 100}],
+    ["switchMutationRate", "Switch copying error (μs)", "%", 0, 5, 0.01, {scale: 100, max: 100}],
     ["mutationWidth", "Peak width", "", 0, 1, 0.01],
     ["mutationSharpness", "Edge sharpness", "", 0.1, 32, 0.1, {max: 1000}],
     ["mutationTail", "Tail exponent", "", 1.01, 10, 0.01, {max: 1000}],
@@ -1353,7 +1617,7 @@ const SETUP_KNOBS = [
   ["initialFood", "Starting food", "F/hex", 0, 20, 0.25],
   ["biasLow", "Bias lower bound", "", -12, 12, 0.1, {min: -1000000}],
   ["biasHigh", "Bias upper bound", "", -12, 12, 0.1, {min: -1000000}],
-  ["weightRange", "Weight range ±", "", 0, 0.1, 0.001],
+  ["weightRange", "Founder & activation range ±", "", 0, 0.1, 0.001],
 ];
 
 let worker;
@@ -1365,10 +1629,12 @@ let setupLocked = false;
 let failed = false;
 let checkpoint = false;
 let pauseAtTick = DEFAULT_PAUSE_TICK;
-let setup = {...DEFAULT_SETUP};
+let setup = {...DEFAULT_SETUP, startingGeneSwitches: {...DEFAULT_SETUP.startingGeneSwitches}};
 let params = {...DEFAULT_PARAMS};
-let appliedParams = {};
 let snapshot = null;
+let latestSummary = null;
+let selectedBin = null;
+let geneRevision = 0;
 let history = [];
 let lastFrame = 0;
 let watch = {cell: 45, entityId: null, token: 0};
@@ -1380,6 +1646,7 @@ let inspectedAt = 0;
 let chart = "genetics";
 let occupantOptions = "";
 let lastLegend = "";
+let lastExcluded = null;
 
 function post(type, details = {}) {
   if (worker) worker.postMessage({type, runId, ...details});
@@ -1517,14 +1784,86 @@ function setLiveParameters(values) {
     Object.entries(MODEL_PRESETS[name]).every(([key, value]) => params[key] === value)
   );
   $("model-preset").value = selected ?? "";
-  showPending();
 }
 
-function showPending() {
-  $("pending-note").hidden = !setupLocked || Object.keys(params).every(key => params[key] === appliedParams[key]);
+function syncGeneTree() {
+  for (const {keys, checkbox, count} of switchRows) {
+    const selected = keys.filter(key => setup.startingGeneSwitches[key]).length;
+    checkbox.checked = selected === keys.length;
+    checkbox.indeterminate = selected > 0 && selected < keys.length;
+    if (count) count.textContent = selected + "/" + keys.length;
+  }
+}
+
+function mountGeneNode(node, list, ancestors = []) {
+  const item = document.createElement("li");
+  const row = document.createElement("div");
+  row.className = "gene-row";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  const path = [...ancestors, node.label];
+  const root = !ancestors.length;
+  let keys;
+  let count;
+  item.append(row);
+  list.append(item);
+  if (node.children) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "gene-disclosure";
+    toggle.textContent = node.label;
+    const group = document.createElement("div");
+    group.id = "gene-branch-" + path.join("-").toLowerCase().replaceAll(" ", "-");
+    group.hidden = true;
+    toggle.setAttribute("aria-controls", group.id);
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.addEventListener("click", () => {
+      group.hidden = !group.hidden;
+      toggle.setAttribute("aria-expanded", String(!group.hidden));
+    });
+    count = document.createElement("span");
+    count.className = "gene-count";
+    count.title = "Selected inputs in this branch";
+    checkbox.setAttribute("aria-label", root ? "All gene switches" : "All " + node.label.toLowerCase() + " inputs");
+    row.append(toggle, count, checkbox);
+    const children = document.createElement("ul");
+    group.append(children);
+    item.append(group);
+    keys = node.children.flatMap(child => mountGeneNode(child, children, path));
+    if (root) {
+      const help = document.createElement("p");
+      help.className = "gene-help";
+      help.textContent = "Founders use these switches. During a run, OFF clears the selected weights and ON redraws them for every entity at the next tick. Descendants can still mutate them.";
+      const status = document.createElement("p");
+      status.id = "gene-reset-status";
+      status.className = "gene-help gene-reset-status";
+      status.setAttribute("role", "status");
+      status.hidden = true;
+      group.append(help, status);
+    }
+  } else {
+    keys = [node.key];
+    checkbox.id = "gene-" + node.key.replaceAll(".", "-");
+    checkbox.setAttribute("aria-label", path.slice(1).join(" · "));
+    const label = document.createElement("label");
+    label.htmlFor = checkbox.id;
+    label.textContent = node.label;
+    row.append(label, checkbox);
+  }
+  switchRows.push({keys, checkbox, count});
+  checkbox.addEventListener("change", () => {
+    const values = Object.fromEntries(keys.map(key => [key, checkbox.checked]));
+    Object.assign(setup.startingGeneSwitches, values);
+    syncGeneTree();
+    post("gene-switches", {values, revision: ++geneRevision});
+  });
+  return keys;
 }
 
 function mountControls() {
+  mountGeneNode(GENE_TREE, $("gene-tree"));
+  syncGeneTree();
+  mountHistogram();
   for (const [name, open, knobs] of GROUPS) {
     const detail = document.createElement("details");
     detail.className = "parameter-group";
@@ -1534,6 +1873,12 @@ function mountControls() {
     const content = document.createElement("div");
     content.className = "knobs";
     for (const knob of knobs) content.append(makeKnob(knob, params, "live"));
+    if (name === "Inheritance") {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "Switching OFF discards the weight. Switching ON draws a fresh weight uniformly from the founder range.";
+      content.append(note);
+    }
     detail.append(summary, content);
     $("runtime-controls").append(detail);
   }
@@ -1560,21 +1905,28 @@ function mountControls() {
   const historySelect = $("gene-select");
   for (const name of new Set(["Reproduction", "Movement", ...ACTIVITIES])) {
     const activity = ACTIVITIES.indexOf(name);
+    const group = document.createElement("optgroup");
+    group.label = name;
     const probability = new Option(name + " · Mean probability", "probability-" + activity);
     probability.dataset.probabilityActivity = String(activity);
-    historySelect.add(probability);
+    group.append(probability);
     for (let j = 0; j < COEFFICIENTS.length; j++) {
-      historySelect.add(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
+      group.append(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
     }
+    historySelect.append(group);
   }
+  const patterns = document.createElement("optgroup");
+  patterns.label = "Switch patterns";
+  patterns.append(new Option("Pattern diversity", "patterns"), new Option("Most common pattern share", "dominance"));
+  historySelect.append(patterns);
   const reproduction = ACTIVITIES.indexOf("Reproduction");
   const bias = COEFFICIENTS.indexOf("Bias");
   historySelect.value = String(reproduction * COEFFICIENTS.length + bias);
-  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages");
-  mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients");
+  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages", 1);
+  mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients", 2);
 }
 
-function mountActivityTable(id, columns, name) {
+function mountActivityTable(id, columns, name, firstWeightColumn) {
   const table = document.createElement("table");
   table.className = "coefficient-table";
   table.setAttribute("aria-label", name);
@@ -1595,10 +1947,28 @@ function mountActivityTable(id, columns, name) {
     for (let j = 0; j < columns.length; j++) {
       const cell = row.insertCell();
       cell.id = id + "-" + i + "-" + j;
-      cell.textContent = "—";
+      if (j >= firstWeightColumn && j < firstWeightColumn + COEFFICIENTS.length - 1) {
+        cell.append(document.createElement("span"), document.createElement("small"));
+      } else {
+        cell.textContent = "—";
+      }
     }
   }
   $(id).append(table);
+}
+
+function connectionIndex(activity, coefficient) {
+  return activity * (COEFFICIENTS.length - 1) + coefficient - 1;
+}
+
+function writeWeight(cell, value, detail) {
+  cell.firstElementChild.textContent = value;
+  cell.lastElementChild.textContent = detail;
+}
+
+function formatOnFraction(fraction) {
+  if (fraction === 0 || fraction === 1) return percent.format(fraction);
+  return formatProbability(fraction);
 }
 
 function formatProbability(value) {
@@ -1623,6 +1993,10 @@ function newRun() {
   checkpoint = false;
   commandPending = false;
   snapshot = null;
+  latestSummary = null;
+  selectedBin = null;
+  geneRevision = 0;
+  $("gene-reset-status").hidden = true;
   history = [];
   normalizeSetup();
   chooseCenter();
@@ -1635,6 +2009,7 @@ function renderStatus(reason, tick) {
   checkpoint = reason === "checkpoint";
   failed = reason === "error";
   running = reason === "running";
+  setFaviconRunning(running);
   setupLocked = running || tick > 0 || failed || reason === "loading";
   const active = $("run-status");
   active.className = "status " + reason;
@@ -1657,7 +2032,6 @@ function renderStatus(reason, tick) {
   notice.hidden = !checkpoint && !failed;
   notice.classList.toggle("error", failed);
   if (checkpoint) notice.textContent = "Paused at tick " + int.format(tick) + ". Resume to continue.";
-  showPending();
 }
 
 function speedValue() { return SPEEDS[$("speed").valueAsNumber]; }
@@ -1677,7 +2051,7 @@ function presentFrame(data) {
   if (data.runId !== runId || data.frame < lastFrame) return;
   lastFrame = data.frame;
   snapshot = data.snapshot;
-  appliedParams = data.params;
+  latestSummary = data.summary;
   if (data.watchToken === watch.token) {
     inspector = snapshot.inspect;
     inspectedAt = snapshot.tick;
@@ -1687,7 +2061,6 @@ function presentFrame(data) {
   renderDish();
   renderInspector();
   renderHistory();
-  showPending();
 }
 
 function receive({data}) {
@@ -1706,13 +2079,25 @@ function receive({data}) {
     case "frame":
       if (data.replaceHistory) {
         history = [];
+        lastExcluded = null;
+        $("exclusion-history").replaceChildren();
       }
       for (const record of data.records) {
         history.push({
           tick: record.tick, population: record.population, food: record.food, energy: record.energy,
           waste: record.waste, genes: record.genes.map(([mean, sd]) => [mean, sd]),
           meanDecisionProbabilities: record.meanDecisionProbabilities,
+          connectionOnFractions: record.connectionOnFractions,
+          distinctPatterns: record.distinctPatterns, effectivePatterns: record.effectivePatterns,
+          dominantPatternShare: record.dominantPatternShare, geneSwitchReset: record.geneSwitchReset,
         });
+        const excluded = record.excludedActivities.join(", ");
+        if (lastExcluded !== excluded) {
+          const item = document.createElement("li");
+          item.textContent = "Tick " + int.format(record.tick) + " · " + (excluded ? excluded + " excluded" : "All activities enabled");
+          $("exclusion-history").prepend(item);
+          lastExcluded = excluded;
+        }
       }
       if (history.length > CHART_WINDOW) history.splice(0, history.length - CHART_WINDOW);
       if (data.debug && document.visibilityState === "visible") {
@@ -1727,9 +2112,13 @@ function receive({data}) {
         if (data.debug) post("painted", {frame: data.frame});
       }
       break;
-    case "applied":
-      appliedParams = data.params;
-      showPending();
+    case "genes-applied":
+      if (data.change) {
+        const {tick, weightsDrawn, weightsRemoved} = data.change;
+        write("gene-reset-status", "Tick " + int.format(tick) + " · " + int.format(weightsDrawn)
+          + " weights drawn · " + int.format(weightsRemoved) + " removed");
+        $("gene-reset-status").hidden = false;
+      }
       break;
     case "inspector":
       if (data.watchToken !== watch.token) break;
@@ -1784,9 +2173,12 @@ function renderGauges(summary, minimum) {
   write("deaths-sudden", int.format(summary.totals.suddenDeaths));
   write("deaths-persistence", int.format(summary.totals.persistenceDeaths));
   write("mutations", int.format(summary.totals.mutations));
+  write("switch-flips", int.format(summary.totals.switchFlips));
+  write("excluded-status", summary.excludedActivities.length
+    ? "Excluded · " + summary.excludedActivities.join(", ") : "All activities enabled");
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const stats = summary.activities[i];
-    const enabled = appliedParams[ACTIVITY_ENABLED_KEYS[i]];
+    const enabled = !summary.excludedActivities.includes(ACTIVITIES[i]);
     write("activity-probability-" + i, formatProbability(summary.meanDecisionProbabilities[i]));
     write("activity-selected-" + i, enabled ? int.format(stats.selected) : "—");
     write("activity-attempted-" + i, enabled ? int.format(stats.attempted) : "—");
@@ -1798,13 +2190,76 @@ function renderPopulationGenetics(summary) {
   write("population-decision-count", summary.decisionCount
     ? int.format(summary.decisionCount) + (summary.decisionCount === 1 ? " entity decided" : " entities decided")
     : "No decisions this tick");
+  write("mean-stored-connections", summary.population ? dec.format(summary.activeConnections / summary.population) : "—");
+  write("mean-effective-connections", summary.population ? dec.format(summary.effectiveActiveConnections / summary.population) : "—");
+  write("connection-upkeep", axisValue(summary.connectionMaintenancePaid) + " E");
+  write("maintained-connections", int.format(summary.maintainedConnections)
+    + (summary.maintainedConnections === 1 ? " connection" : " connections"));
   for (let i = 0; i < ACTIVITIES.length; i++) {
-    for (let j = 0; j < COEFFICIENTS.length; j++) {
+    const bias = summary.genes[i * COEFFICIENTS.length][0];
+    write("population-genes-table-" + i + "-0", bias === null ? "—" : exact(bias));
+    for (let j = 1; j < COEFFICIENTS.length; j++) {
       const [mean] = summary.genes[i * COEFFICIENTS.length + j];
-      write("population-genes-table-" + i + "-" + j, mean === null ? "—" : exact(mean));
+      const fraction = summary.connectionOnFractions[connectionIndex(i, j)];
+      writeWeight($("population-genes-table-" + i + "-" + j), mean === null ? "—" : exact(mean),
+        fraction === null ? "" : formatOnFraction(fraction) + " ON");
     }
     write("population-genes-table-" + i + "-" + COEFFICIENTS.length,
       formatProbability(summary.meanDecisionProbabilities[i]));
+  }
+  write("distinct-patterns", int.format(summary.distinctPatterns));
+  write("effective-patterns", summary.effectivePatterns === null ? "—" : dec.format(summary.effectivePatterns));
+  write("dominant-share", formatOnFraction(summary.dominantPatternShare));
+  write("leading-pattern", describeLeadingPattern(summary));
+  renderHistogram(summary);
+}
+
+function describeLeadingPattern({leadingPattern, leadingPatternCount}) {
+  if (!leadingPatternCount) return "No living entities.";
+  if (leadingPatternCount > 1) return int.format(leadingPatternCount) + " patterns share the lead.";
+  if (!leadingPattern.includes("0")) return "Most common pattern · All inputs ON";
+  if (!leadingPattern.includes("1")) return "Most common pattern · All inputs OFF";
+  const inputs = COEFFICIENTS.slice(1);
+  const groups = [];
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    const on = inputs.filter((_, j) => leadingPattern[connectionIndex(i, j + 1)] === "1");
+    if (on.length) groups.push(ACTIVITIES[i] + " (" + on.join(", ") + ")");
+  }
+  return "Most common pattern · " + groups.join(" · ");
+}
+
+function mountHistogram() {
+  const length = Object.keys(DEFAULT_SETUP.startingGeneSwitches).length;
+  for (let i = 0; i <= length; i++) {
+    const bin = document.createElement("button");
+    bin.type = "button";
+    const bar = document.createElement("i");
+    bar.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = i;
+    bin.append(bar, label);
+    bin.addEventListener("click", () => {
+      selectedBin = i;
+      if (latestSummary) renderHistogram(latestSummary);
+    });
+    histogramBins.push(bin);
+    $("gene-histogram").append(bin);
+  }
+}
+
+function renderHistogram({connectionHistogram: bins, population}) {
+  const peak = Math.max(...bins);
+  const selected = selectedBin ?? bins.indexOf(peak);
+  for (let i = 0; i < bins.length; i++) {
+    const button = histogramBins[i];
+    const count = bins[i];
+    const label = i + " ON · " + int.format(count) + (count === 1 ? " entity" : " entities")
+      + (population ? " (" + formatOnFraction(count / population) + ")" : "");
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", String(i === selected && population > 0));
+    button.style.setProperty("--height", (peak ? 100 * count / peak : 0) + "%");
+    if (i === selected) write("histogram-value", population ? label : "No living entities");
   }
 }
 
@@ -1978,12 +2433,16 @@ function renderInspector() {
   write("entity-waste", dec.format(selected.waste));
   write("entity-origin", "Generation " + int.format(selected.generation) + " · Born at tick " + int.format(selected.born)
     + (selected.parentId ? " · Parent " + int.format(selected.parentId) : " · Founder"));
+  write("entity-connections", "Connections · " + selected.activeConnections + " ON · " + selected.effectiveActiveConnections + " effective");
   const probabilities = selected.lastDecisionProbabilities;
-  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions this tick");
+  write("entity-decision-tick", selected.lastDecisionTick === null ? "No decisions this tick" : "Tick " + int.format(selected.lastDecisionTick));
   for (let i = 0; i < ACTIVITIES.length; i++) {
     write("entity-genes-table-" + i + "-0", formatProbability(probabilities?.[i] ?? null));
-    for (let j = 0; j < COEFFICIENTS.length; j++) {
-      write("entity-genes-table-" + i + "-" + (j + 1), exact(selected.coefficients[i * COEFFICIENTS.length + j]));
+    write("entity-genes-table-" + i + "-1", exact(selected.coefficients[i * COEFFICIENTS.length]));
+    for (let j = 1; j < COEFFICIENTS.length; j++) {
+      const weight = selected.coefficients[i * COEFFICIENTS.length + j];
+      writeWeight($("entity-genes-table-" + i + "-" + (j + 1)), weight === null ? "OFF" : exact(weight),
+        weight === null ? "" : "ON");
     }
   }
 }
@@ -2026,6 +2485,12 @@ function renderHistory() {
   const metric = $("gene-select").selectedOptions[0];
   const probabilityActivity = metric.dataset.probabilityActivity;
   const probabilityChart = chart === "genetics" && probabilityActivity !== undefined;
+  const gene = Number(metric.value);
+  const coefficientChart = chart === "genetics" && Number.isInteger(gene);
+  const dominanceChart = chart === "genetics" && metric.value === "dominance";
+  const coefficientIndex = gene % COEFFICIENTS.length;
+  const inputChart = coefficientChart && coefficientIndex !== 0;
+  $("connection-trend").hidden = !inputChart;
   const first = history[0].tick;
   const last = history.at(-1).tick;
   let series;
@@ -2051,8 +2516,18 @@ function renderHistory() {
     }];
     legend = series;
     write("history-caption", "Mean decision probability by tick");
+  } else if (metric.value === "patterns") {
+    series = [
+      {name: "Distinct patterns", color: "#ccdfa4", values: history.map(record => record.distinctPatterns)},
+      {name: "Effective patterns", color: "#bc9ecf", values: history.map(record => record.effectivePatterns)},
+    ];
+    legend = series;
+    write("history-caption", "Diversity of inherited switch patterns by tick");
+  } else if (dominanceChart) {
+    series = [{name: "Largest share", color: "#eeb463", values: history.map(record => record.dominantPatternShare)}];
+    legend = series;
+    write("history-caption", "Share of the population with the most common pattern");
   } else {
-    const gene = Number(metric.value);
     const coefficient = history.map(record => record.genes[gene]);
     series = [
       {name: "Mean", color: "#ccdfa4", values: coefficient.map(([mean]) => mean)},
@@ -2060,16 +2535,36 @@ function renderHistory() {
       {name: "Lower", color: "#8c9c6b", values: coefficient.map(([mean, sd]) => mean === null ? null : mean - sd)},
     ];
     legend = [series[0], {name: "±1 standard deviation", color: "#8c9c6b"}];
-    write("history-caption", "Inherited coefficient by tick");
+    write("history-caption", inputChart ? "Weight among entities with this connection ON" : "Inherited bias by tick");
   }
   if (first > 0) $("history-caption").textContent += " · Latest " + int.format(CHART_WINDOW) + " ticks";
   const lastPoint = series[0].values.at(-1);
-  const formatValue = probabilityChart ? formatProbability : axisValue;
-  const noValue = probabilityChart ? ". No probability recorded at this tick." : ". No surviving entities.";
+  const formatValue = dominanceChart ? formatOnFraction : probabilityChart ? formatProbability : axisValue;
+  const noValue = probabilityChart ? ". No probability recorded at this tick."
+    : inputChart ? ". No living entity has this connection ON." : ". No surviving entities.";
   $("history").setAttribute("aria-label", series[0].name + " from tick " + first + " to " + last
     + (lastPoint === null ? noValue : ". Latest value " + formatValue(lastPoint) + "."));
-  drawLegend(legend);
-  drawChart(context, series, first, last, probabilityChart);
+  const resets = chart === "genetics" ? history.filter(record => record.geneSwitchReset).map(record => record.tick) : [];
+  drawLegend(resets.length ? [...legend, {name: "Manual gene reset", color: "#d6a76c"}] : legend);
+  const kind = coefficientChart ? "coefficient" : probabilityChart ? "probability" : dominanceChart ? "fraction" : chart;
+  drawChart(context, series, first, last, kind, resets);
+  if (inputChart) {
+    const index = connectionIndex(Math.floor(gene / COEFFICIENTS.length), coefficientIndex);
+    const values = history.map(record => record.connectionOnFractions[index]);
+    const latest = formatOnFraction(values.at(-1));
+    write("connection-fraction", latest);
+    if (latestSummary) {
+      const signs = latestSummary.weightSigns;
+      const carriers = signs.negative[index] + signs.zero[index] + signs.positive[index];
+      write("weight-signs", carriers ? "Among carriers · " + formatOnFraction(signs.negative[index] / carriers)
+        + " negative · " + formatOnFraction(signs.zero[index] / carriers) + " zero · "
+        + formatOnFraction(signs.positive[index] / carriers) + " positive" : "No living entity carries this weight.");
+    }
+    const canvas = $("connection-history");
+    canvas.setAttribute("aria-label", metric.text + " connection ON from tick " + first + " to " + last + ". Latest fraction " + latest);
+    const fractionContext = canvasContext(canvas);
+    if (fractionContext) drawChart(fractionContext, [{color: "#bc9ecf", values}], first, last, "fraction", resets);
+  }
 }
 
 function drawLegend(legend) {
@@ -2085,10 +2580,11 @@ function drawLegend(legend) {
   }));
 }
 
-function drawChart({ctx, width, height}, series, first, last, probabilityChart) {
-  const coefficientBand = chart === "genetics" && !probabilityChart;
-  const [min, max] = plotRange(series, !coefficientBand, probabilityChart ? 0.01 : 1);
-  const formatAxis = probabilityChart ? percent.format : axisValue;
+function drawChart({ctx, width, height}, series, first, last, kind, resets) {
+  const coefficientBand = kind === "coefficient";
+  const fraction = kind === "fraction";
+  const [min, max] = fraction ? [0, 1] : plotRange(series, !coefficientBand, kind === "probability" ? 0.01 : 1);
+  const formatAxis = fraction || kind === "probability" ? percent.format : axisValue;
   const left = 47;
   const right = width - 13;
   const top = 9;
@@ -2101,8 +2597,9 @@ function drawChart({ctx, width, height}, series, first, last, probabilityChart) 
   ctx.fillStyle = "#aaa895";
   ctx.strokeStyle = "#3a3e30";
   ctx.lineWidth = 1;
-  for (let mark = 0; mark <= 4; mark++) {
-    const value = min + (max - min) * mark / 4;
+  const marks = fraction ? 2 : 4;
+  for (let mark = 0; mark <= marks; mark++) {
+    const value = min + (max - min) * mark / marks;
     const position = y(value);
     ctx.fillText(formatAxis(value), left - 6, position);
     ctx.beginPath();
@@ -2120,20 +2617,40 @@ function drawChart({ctx, width, height}, series, first, last, probabilityChart) 
   ctx.beginPath();
   ctx.rect(left - 3, top - 5, right - left + 6, bottom - top + 9);
   ctx.clip();
+  if (resets.length) {
+    ctx.beginPath();
+    ctx.strokeStyle = "#d6a76c";
+    ctx.setLineDash([2, 4]);
+    for (const tick of resets) {
+      const position = x(tick - first);
+      ctx.moveTo(position, top);
+      ctx.lineTo(position, bottom);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   if (coefficientBand) {
     const upper = series[1].values;
     const lower = series[2].values;
-    const lastValid = upper.findLastIndex(Number.isFinite);
-    const firstValid = upper.findIndex(Number.isFinite);
-    if (lastValid >= 0) {
-      ctx.beginPath();
-      ctx.moveTo(x(firstValid), y(upper[firstValid]));
-      for (let i = firstValid + 1; i <= lastValid; i++) ctx.lineTo(x(i), y(upper[i]));
-      for (let i = lastValid; i >= firstValid; i--) ctx.lineTo(x(i), y(lower[i]));
+    ctx.beginPath();
+    let start = 0;
+    while (start < upper.length) {
+      if (!Number.isFinite(upper[start]) || !Number.isFinite(lower[start])) {
+        start++;
+        continue;
+      }
+      let end = start + 1;
+      ctx.moveTo(x(start), y(upper[start]));
+      while (end < upper.length && Number.isFinite(upper[end]) && Number.isFinite(lower[end])) {
+        ctx.lineTo(x(end), y(upper[end]));
+        end++;
+      }
+      for (let i = end - 1; i >= start; i--) ctx.lineTo(x(i), y(lower[i]));
       ctx.closePath();
-      ctx.fillStyle = "#b9ce8239";
-      ctx.fill();
+      start = end;
     }
+    ctx.fillStyle = "#b9ce8239";
+    ctx.fill();
   }
   const lines = coefficientBand ? series.slice(0, 1) : series;
   for (const line of lines) {
@@ -2234,6 +2751,85 @@ function mountEvents() {
   new ResizeObserver(renderHistory).observe($("history"));
 }
 
+function mountFavicon() {
+  const mark = document.querySelector(".brand-mark");
+  const style = getComputedStyle(mark);
+  const ring = getComputedStyle(mark, "::before");
+  const size = parseFloat(style.width);
+  const center = size / 2;
+  const borderWidth = parseFloat(style.borderTopWidth);
+  const ringWidth = parseFloat(ring.borderTopWidth);
+  const ringRadius = center - borderWidth - parseFloat(ring.top) - ringWidth / 2;
+  const cells = Array.from(mark.children, element => {
+    const cell = getComputedStyle(element);
+    const radius = parseFloat(cell.width) / 2;
+    return {
+      x: parseFloat(cell.left) + borderWidth + radius - center,
+      y: parseFloat(cell.top) + borderWidth + radius - center,
+      radius, color: cell.backgroundColor, opacity: Number(cell.opacity),
+    };
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return () => {};
+  ctx.scale(canvas.width / size, canvas.height / size);
+
+  const inset = borderWidth / 2;
+  const edge = size - inset;
+  const radius = parseFloat(style.borderTopLeftRadius) - inset;
+  const outline = new Path2D();
+  outline.moveTo(inset + radius, inset);
+  outline.arcTo(edge, inset, edge, edge, radius);
+  outline.arcTo(edge, edge, inset, edge, radius);
+  outline.arcTo(inset, edge, inset, inset, radius);
+  outline.arcTo(inset, inset, edge, inset, radius);
+  outline.closePath();
+
+  const frameCount = 16;
+  const frames = Array.from({length: frameCount}, (_, frame) => {
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = style.backgroundColor;
+    ctx.fill(outline);
+    ctx.strokeStyle = style.borderTopColor;
+    ctx.lineWidth = borderWidth;
+    ctx.stroke(outline);
+    ctx.beginPath();
+    ctx.arc(center, center, ringRadius, 0, 2 * Math.PI);
+    ctx.lineWidth = ringWidth;
+    ctx.strokeStyle = ring.borderTopColor;
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate(2 * Math.PI * frame / frameCount);
+    for (const cell of cells) {
+      ctx.beginPath();
+      ctx.arc(cell.x, cell.y, cell.radius, 0, 2 * Math.PI);
+      ctx.fillStyle = cell.color;
+      ctx.globalAlpha = cell.opacity;
+      ctx.fill();
+    }
+    ctx.restore();
+    return canvas.toDataURL("image/png");
+  });
+  const favicon = $("favicon");
+  let frame = 0;
+  let timer = null;
+  favicon.href = frames[frame];
+  return isRunning => {
+    if (!isRunning) {
+      clearInterval(timer);
+      timer = null;
+    } else if (timer === null) {
+      timer = setInterval(() => {
+        frame = (frame + 1) % frames.length;
+        favicon.href = frames[frame];
+      }, 150);
+    }
+  };
+}
+
 function launch() {
   mountControls();
   const source = new Blob([$("worker-source").textContent], {type: "text/javascript"});
@@ -2250,6 +2846,7 @@ function launch() {
   newRun();
 }
 
+const setFaviconRunning = mountFavicon();
 launch();
 </script>
 </body>

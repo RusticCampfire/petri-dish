@@ -17,6 +17,7 @@ let nextTick = 0;
 let lastFrame = 0;
 let tickRateSample = null;
 let pending = {};
+let pendingGenes = null;
 let watch = {cell: 45, entityId: null, token: 0};
 
 function publish({debug = false, replaceHistory = false} = {}) {
@@ -68,9 +69,12 @@ function advance() {
   if (Object.keys(pending).length) {
     simulation.applyParameters(pending);
     pending = {};
-    postMessage({type: "applied", runId, params: simulation.params});
   }
-  simulation.step();
+  simulation.step(pendingGenes?.values);
+  if (pendingGenes) {
+    postMessage({type: "genes-applied", runId, revision: pendingGenes.revision, change: simulation.geneSwitchChanges.at(-1)});
+    pendingGenes = null;
+  }
   if (pauseAtTick > 0 && simulation.tick === pauseAtTick) {
     stop();
     return true;
@@ -124,6 +128,7 @@ self.onmessage = ({data}) => {
       pauseAtTick = data.pauseAtTick ?? DEFAULT_PAUSE_TICK;
       failure = false;
       pending = {};
+      pendingGenes = null;
       watch = data.watch;
       speed = data.speed;
       refresh = data.refresh;
@@ -151,6 +156,20 @@ self.onmessage = ({data}) => {
           publish({replaceHistory: true});
         } else {
           Object.assign(pending, data.values);
+        }
+        break;
+      case "gene-switches":
+        if (!running && !simulation.tick && !failure) {
+          simulation = new Simulation({
+            setup: {...simulation.setup, startingGeneSwitches: {...simulation.setup.startingGeneSwitches, ...data.values}},
+            params: simulation.params, seed: simulation.globalSeed,
+          });
+          publish({replaceHistory: true});
+          postMessage({type: "genes-applied", runId, revision: data.revision});
+        } else {
+          pendingGenes ??= {values: {}, revision: 0};
+          Object.assign(pendingGenes.values, data.values);
+          pendingGenes.revision = data.revision;
         }
         break;
       case "display":

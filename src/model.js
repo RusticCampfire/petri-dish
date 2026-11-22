@@ -1,7 +1,7 @@
 "use strict";
 
 const Petri = (() => {
-  const VERSION = "0.2";
+  const VERSION = "0.3";
   const ACTIVITY_NAMES = {
     excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
     movementEnabled: "Movement", reproductionEnabled: "Reproduction",
@@ -9,16 +9,35 @@ const Petri = (() => {
   const ACTIVITIES = Object.values(ACTIVITY_NAMES);
   const ACTIVITY_ENABLED_KEYS = Object.keys(ACTIVITY_NAMES);
   const COEFFICIENTS = ["Bias", "Mass", "Energy", "Waste"];
+  const GENE_TREE = {
+    label: "Gene switches",
+    children: ACTIVITIES.map((activity, a) => ({
+      label: activity,
+      children: COEFFICIENTS.slice(1).map((input, j) => ({
+        label: input, key: activity.toLowerCase() + "." + input.toLowerCase(),
+        coefficient: a * COEFFICIENTS.length + j + 1,
+      })),
+    })),
+  };
+  function connectionLeaves(node) {
+    return node.children ? node.children.flatMap(connectionLeaves) : [node];
+  }
+  const CONNECTIONS = connectionLeaves(GENE_TREE);
+  // Pack small patterns as exact integers. Longer trees use full bit strings without truncation.
+  const NUMERIC_PATTERN = CONNECTIONS.length <= 53;
+  const INPUT_AT = new Array(ACTIVITIES.length * COEFFICIENTS.length).fill(-1);
+  CONNECTIONS.forEach((gene, index) => { INPUT_AT[gene.coefficient] = index; });
   const DEFAULT_SETUP = Object.freeze({
     radius: 5, founders: 30, initialMass: 10, initialEnergy: 40, initialWaste: 0,
     initialFood: 0, biasLow: -3, biasHigh: -1.5, weightRange: 0.01,
+    startingGeneSwitches: Object.freeze(Object.fromEntries(CONNECTIONS.map(({key}) => [key, true]))),
   });
   const DEFAULT_PARAMS = Object.freeze({
-    foodMean: 3, foodSD: 1.5, intake: 0.35, energyPerFood: 1, energyWasteRatio: 2,
-    foodPerMass: 1, energyCapacity: 8, wasteCapacity: 4, persistence: 0.15,
+    foodMean: 2, foodSD: 1.5, intake: 0.35, energyPerFood: 1, energyWasteRatio: 2,
+    foodPerMass: 1, energyCapacity: 8, wasteCapacity: 4, persistence: 0.15, connectionCost: 0.01,
     excretionRate: 1.2, excretionCost: 0.05, growthFraction: 0.1, shrinkFraction: 0.1,
     growthSpread: 0.2, movementCost: 0.02, reproductionCost: 2, divisionLoss: 0.1,
-    offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, mutationWidth: 0.2,
+    offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, switchMutationRate: 0.001, mutationWidth: 0.2,
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
     ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
@@ -119,20 +138,42 @@ const Petri = (() => {
     return logit < 0 ? rare : !rare;
   }
 
+  function initialWeight(range, random) {
+    return range * (2 * random.unit() - 1);
+  }
+
+  // A null input slot is the inherited OFF state. There is no dormant weight.
+  // Bias slots and ON inputs always contain a finite number, including zero.
+  function enabledConnectionCount(genes, enabled) {
+    let count = 0;
+    for (let activity = 0; activity < enabled.length; activity++) {
+      if (!enabled[activity]) continue;
+      const offset = activity * COEFFICIENTS.length;
+      for (let j = 1; j < COEFFICIENTS.length; j++) {
+        if (genes[offset + j] !== null) count++;
+      }
+    }
+    return count;
+  }
+
   function dotProduct(entity, offset) {
     const genes = entity.genes;
     const bias = genes[offset];
     const massWeight = genes[offset + 1];
     const energyWeight = genes[offset + 2];
     const wasteWeight = genes[offset + 3];
-    const sum = bias + massWeight * entity.mass + energyWeight * entity.energy + wasteWeight * entity.waste;
+    const sum = bias
+      + (massWeight === null ? 0 : massWeight * entity.mass)
+      + (energyWeight === null ? 0 : energyWeight * entity.energy)
+      + (wasteWeight === null ? 0 : wasteWeight * entity.waste);
     if (Number.isFinite(sum)) return sum;
-    const weightScale = Math.max(Math.abs(bias), Math.abs(massWeight), Math.abs(energyWeight), Math.abs(wasteWeight));
-    const stateScale = Math.max(1, entity.mass, entity.energy, entity.waste);
+    const weightScale = Math.max(Math.abs(bias), Math.abs(massWeight ?? 0), Math.abs(energyWeight ?? 0), Math.abs(wasteWeight ?? 0));
+    const stateScale = Math.max(1, massWeight === null ? 0 : entity.mass,
+      energyWeight === null ? 0 : entity.energy, wasteWeight === null ? 0 : entity.waste);
     const scaled = (bias / weightScale) / stateScale
-      + (massWeight / weightScale) * (entity.mass / stateScale)
-      + (energyWeight / weightScale) * (entity.energy / stateScale)
-      + (wasteWeight / weightScale) * (entity.waste / stateScale);
+      + (massWeight === null ? 0 : (massWeight / weightScale) * (entity.mass / stateScale))
+      + (energyWeight === null ? 0 : (energyWeight / weightScale) * (entity.energy / stateScale))
+      + (wasteWeight === null ? 0 : (wasteWeight / weightScale) * (entity.waste / stateScale));
     return (scaled * weightScale) * stateScale;
   }
 
@@ -207,19 +248,25 @@ const Petri = (() => {
 
   function tickStats() {
     return {
-      births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0,
+      births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0, switchFlips: 0,
+      maintainedConnections: 0, connectionMaintenancePaid: 0,
       foodProduced: 0, foodConsumed: 0, foodRecycled: 0,
       activities: ACTIVITIES.map(() => ({selected: 0, attempted: 0, succeeded: 0})),
       decisionCount: 0, meanDecisionProbabilities: ACTIVITIES.map(() => null),
     };
   }
 
-  function entityState(entity) {
+  function entityState(entity, enabled, tick) {
+    const connectionSwitches = entity.genes.filter((_, i) => i % COEFFICIENTS.length !== 0)
+      .map(weight => weight !== null);
     return {
       id: entity.id, parentId: entity.parentId, founderId: entity.founderId,
       generation: entity.generation, born: entity.born, cell: entity.cell,
       mass: entity.mass, surface: entity.surface, energy: entity.energy, waste: entity.waste,
-      coefficients: Array.from(entity.genes),
+      coefficients: entity.genes.slice(), connectionSwitches,
+      activeConnections: connectionSwitches.filter(Boolean).length,
+      effectiveActiveConnections: enabledConnectionCount(entity.genes, enabled),
+      lastDecisionTick: entity.lastDecisionProbabilities ? tick : null,
       lastDecisionProbabilities: entity.lastDecisionProbabilities
         ? Array.from(entity.lastDecisionProbabilities) : null,
     };
@@ -229,6 +276,8 @@ const Petri = (() => {
     constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed} = {}) {
       this.params = {...DEFAULT_PARAMS, ...params};
       this.setup = {...DEFAULT_SETUP, ...setup};
+      this.setup.startingGeneSwitches = {...DEFAULT_SETUP.startingGeneSwitches, ...setup.startingGeneSwitches};
+      this.appliedGeneSwitches = {...this.setup.startingGeneSwitches};
       this.entropy = entropy;
       this.globalSeed = seed ? new Uint32Array(seed) : entropy(new Uint32Array(4));
       this.tickSalt = new Uint32Array(4);
@@ -241,7 +290,8 @@ const Petri = (() => {
       this.entities = [];
       this.history = [];
       this.parameterChanges = [];
-      this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0};
+      this.geneSwitchChanges = [];
+      this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0, switchFlips: 0};
       this.recentLifespans = [];
       this.lifespanSum = 0;
       this.nextLifespanIndex = 0;
@@ -260,11 +310,14 @@ const Petri = (() => {
       for (let i = 0; i < founders; i++) {
         const chosen = i + Math.floor(this.random.unit() * (places.length - i));
         [places[i], places[chosen]] = [places[chosen], places[i]];
-        const genes = new Float64Array(ACTIVITIES.length * COEFFICIENTS.length);
-        for (let offset = 0; offset < genes.length; offset += 4) {
+        const genes = new Array(ACTIVITIES.length * COEFFICIENTS.length);
+        for (let offset = 0; offset < genes.length; offset += COEFFICIENTS.length) {
           genes[offset] = biasLow + this.random.unit() * (biasHigh - biasLow);
-          for (let weight = 1; weight < 4; weight++) {
-            genes[offset + weight] = weightRange * (2 * this.random.unit() - 1);
+          for (let weight = 1; weight < COEFFICIENTS.length; weight++) {
+            const index = offset + weight;
+            // Keep positions, biases and unrelated weights stable while editing the seeded preview.
+            const drawn = initialWeight(weightRange, this.random);
+            genes[index] = this.setup.startingGeneSwitches[CONNECTIONS[INPUT_AT[index]].key] ? drawn : null;
           }
         }
         this.entities.push(this.makeEntity(places[i], initialMass, energy, waste, genes));
@@ -281,6 +334,10 @@ const Petri = (() => {
       };
     }
 
+    enabledActivities() {
+      return ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
+    }
+
     applyParameters(changes) {
       const actual = {};
       for (const key of Object.keys(changes)) {
@@ -289,6 +346,29 @@ const Petri = (() => {
         actual[key] = changes[key];
       }
       if (Object.keys(actual).length) this.parameterChanges.push({tick: this.tick + 1, values: actual});
+    }
+
+    resetGeneSwitches(settings) {
+      const targets = CONNECTIONS.filter(({key}) => typeof settings[key] === "boolean");
+      if (!targets.length) return;
+      const values = {};
+      let weightsDrawn = 0;
+      let weightsRemoved = 0;
+      for (const {key, coefficient} of targets) {
+        const on = settings[key];
+        values[key] = on;
+        this.appliedGeneSwitches[key] = on;
+        for (const entity of this.entities) {
+          if (on) {
+            entity.genes[coefficient] = initialWeight(this.setup.weightRange, this.random);
+            weightsDrawn++;
+          } else {
+            if (entity.genes[coefficient] !== null) weightsRemoved++;
+            entity.genes[coefficient] = null;
+          }
+        }
+      }
+      this.geneSwitchChanges.push({tick: this.tick, values, population: this.entities.length, weightsDrawn, weightsRemoved});
     }
 
     recordDeath(entity) {
@@ -300,11 +380,12 @@ const Petri = (() => {
       this.cells[entity.cell].released += entity.mass;
     }
 
-    step() {
+    step(geneSwitchResets) {
       this.tick++;
       this.entropy(this.tickSalt);
       this.random.reseed(this.globalSeed, this.tickSalt);
       this.stats = tickStats();
+      if (geneSwitchResets) this.resetGeneSwitches(geneSwitchResets);
       for (const cell of this.cells) cell.feeders.length = 0;
 
       // 1. Sudden death.
@@ -332,19 +413,23 @@ const Petri = (() => {
         this.stats.foodConsumed += feedCell(cell, this.params, wastePerFood);
       }
       this.entities = [];
+      const enabled = this.enabledActivities();
       for (const entity of feeding) {
-        const cost = this.params.persistence * entity.mass;
+        const connections = enabledConnectionCount(entity.genes, enabled);
+        const upkeep = this.params.connectionCost * connections;
+        const cost = this.params.persistence * entity.mass + upkeep;
         if (entity.energy < cost) {
           this.stats.persistenceDeaths++;
           this.recordDeath(entity);
         } else {
           entity.energy -= cost;
+          this.stats.maintainedConnections += connections;
+          this.stats.connectionMaintenancePaid += upkeep;
           this.entities.push(entity);
         }
       }
 
       // 5. Decisions use the same pre-execution state within each entity.
-      const enabled = ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
       const anyEnabled = enabled.some(Boolean);
       const probabilitySums = new Float64Array(ACTIVITIES.length);
       for (const entity of this.entities) {
@@ -399,7 +484,7 @@ const Petri = (() => {
       }
       for (const key of Object.keys(this.totals)) this.totals[key] += this.stats[key];
       this.peakPopulation = Math.max(this.peakPopulation, this.entities.length);
-      return this.record();
+      return this.record(enabled);
     }
 
     execute(activity, entity, newborns) {
@@ -486,36 +571,66 @@ const Petri = (() => {
 
     inherit(original) {
       const genes = original.slice();
-      if (this.params.mutationRate === 0 || this.params.mutationWidth === 0) return genes;
-      for (let i = 0; i < genes.length; i++) {
-        const activity = Math.floor(i / COEFFICIENTS.length);
+      const {mutationRate, mutationWidth, switchMutationRate} = this.params;
+      const mutateNumbers = mutationRate > 0 && mutationWidth > 0;
+      if (!mutateNumbers && switchMutationRate === 0) return genes;
+      for (let activity = 0; activity < ACTIVITIES.length; activity++) {
         if (!this.params[ACTIVITY_ENABLED_KEYS[activity]]) continue;
-        if (this.random.unit() >= this.params.mutationRate) continue;
-        const mutated = mutateValue(genes[i], this.params, this.random);
-        if (mutated !== genes[i]) this.stats.mutations++;
-        genes[i] = mutated;
+        for (let j = 0; j < COEFFICIENTS.length; j++) {
+          const i = activity * COEFFICIENTS.length + j;
+          if (j !== 0 && switchMutationRate > 0 && this.random.unit() < switchMutationRate) {
+            genes[i] = original[i] === null ? initialWeight(this.setup.weightRange, this.random) : null;
+            this.stats.switchFlips++;
+            continue;
+          }
+          if (genes[i] === null || !mutateNumbers || this.random.unit() >= mutationRate) continue;
+          const mutated = mutateValue(genes[i], this.params, this.random);
+          if (mutated !== genes[i]) this.stats.mutations++;
+          genes[i] = mutated;
+        }
       }
       return genes;
     }
 
-    record() {
+    record(enabled = this.enabledActivities()) {
       const population = this.entities.length;
       const geneLength = ACTIVITIES.length * COEFFICIENTS.length;
       const genes = Array.from({length: geneLength}, () => [0, 0, Infinity, -Infinity]);
       const scales = new Float64Array(geneLength);
+      const sampleCounts = new Array(geneLength).fill(0);
+      const patternCounts = new Map();
+      const connectionHistogram = new Array(CONNECTIONS.length + 1).fill(0);
+      const weightSigns = {
+        negative: new Array(CONNECTIONS.length).fill(0),
+        zero: new Array(CONNECTIONS.length).fill(0),
+        positive: new Array(CONNECTIONS.length).fill(0),
+      };
       let energy = 0;
       let waste = 0;
       let mass = 0;
-      let count = 0;
       let generation = 0;
       for (const entity of this.entities) {
-        count++;
         energy += entity.energy;
         waste += entity.waste;
         mass += entity.mass;
         generation = Math.max(generation, entity.generation);
+        let pattern = NUMERIC_PATTERN ? 0 : "";
+        let stored = 0;
         for (let i = 0; i < geneLength; i++) {
           const value = entity.genes[i];
+          const input = INPUT_AT[i];
+          if (input !== -1) {
+            const bit = value === null ? 0 : 1;
+            pattern = NUMERIC_PATTERN ? pattern * 2 + bit : pattern + bit;
+            if (value !== null) {
+              stored++;
+              if (value > 0) weightSigns.positive[input]++;
+              else if (value < 0) weightSigns.negative[input]++;
+              else weightSigns.zero[input]++;
+            }
+          }
+          if (value === null) continue;
+          const count = ++sampleCounts[i];
           const distribution = genes[i];
           const magnitude = Math.abs(value);
           if (magnitude > scales[i]) {
@@ -531,12 +646,41 @@ const Petri = (() => {
           distribution[2] = Math.min(distribution[2], value);
           distribution[3] = Math.max(distribution[3], value);
         }
+        connectionHistogram[stored]++;
+        patternCounts.set(pattern, (patternCounts.get(pattern) ?? 0) + 1);
       }
+      let sumSquares = 0;
+      let largestPattern = 0;
+      let leadingPattern = null;
+      let leadingPatternCount = 0;
+      for (const [pattern, count] of patternCounts) {
+        sumSquares += count * count;
+        if (count > largestPattern) {
+          largestPattern = count;
+          leadingPattern = pattern;
+          leadingPatternCount = 1;
+        } else if (count === largestPattern) {
+          leadingPatternCount++;
+          leadingPattern = null;
+        }
+      }
+      if (leadingPattern !== null && NUMERIC_PATTERN) {
+        leadingPattern = leadingPattern.toString(2).padStart(CONNECTIONS.length, "0");
+      }
+      const connectionOnFractions = [];
+      let activeConnections = 0;
+      let effectiveActiveConnections = 0;
       for (let i = 0; i < geneLength; i++) {
         const distribution = genes[i];
-        if (population) {
+        const count = sampleCounts[i];
+        if (i % COEFFICIENTS.length !== 0) {
+          connectionOnFractions.push(population ? count / population : null);
+          activeConnections += count;
+          if (enabled[Math.floor(i / COEFFICIENTS.length)]) effectiveActiveConnections += count;
+        }
+        if (count) {
           distribution[0] *= scales[i];
-          distribution[1] = Math.sqrt(Math.min(1, Math.max(0, distribution[1]) / population)) * scales[i];
+          distribution[1] = Math.sqrt(Math.min(1, Math.max(0, distribution[1]) / count)) * scales[i];
         } else {
           distribution.fill(null);
         }
@@ -551,6 +695,13 @@ const Petri = (() => {
       const lifespanSamples = this.recentLifespans.length;
       const result = {
         tick: this.tick, population, food, mass, energy, waste, generation, genes,
+        activeConnections, effectiveActiveConnections, connectionOnFractions,
+        connectionHistogram, weightSigns,
+        distinctPatterns: patternCounts.size, effectivePatterns: population ? population * population / sumSquares : null,
+        dominantPatternShare: population ? largestPattern / population : null,
+        leadingPattern, leadingPatternCount,
+        geneSwitchReset: this.geneSwitchChanges.at(-1)?.tick === this.tick,
+        excludedActivities: ACTIVITIES.filter((_, i) => !enabled[i]),
         lifespanSamples, meanLifespan: lifespanSamples ? this.lifespanSum / lifespanSamples : null,
         energyCapacity, wasteCapacity,
         peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
@@ -564,7 +715,7 @@ const Petri = (() => {
       const selected = occupants.find(entity => entity.id === entityId) ?? occupants[0];
       return {
         cell, food: this.cells[cell]?.food, ids: occupants.map(entity => entity.id),
-        entity: selected ? entityState(selected) : null,
+        entity: selected ? entityState(selected, this.enabledActivities(), this.tick) : null,
       };
     }
 
@@ -579,12 +730,32 @@ const Petri = (() => {
     }
 
     exportResults() {
+      const enabled = this.enabledActivities();
       return {
         model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
         setup: this.setup, initialParameters: this.initialParams, appliedParameters: this.params,
+        appliedGeneSwitches: this.appliedGeneSwitches, geneSwitchChanges: this.geneSwitchChanges,
         parameterChanges: this.parameterChanges, activityOrder: ACTIVITIES, coefficientOrder: COEFFICIENTS,
+        connectionInputOrder: COEFFICIENTS.slice(1),
+        genetics: {
+          connectionOrder: "Activity order, then connection input order. An OFF weight is null.",
+          activationDistribution: "Uniform from -setup.weightRange to +setup.weightRange",
+          geneSwitchChanges: "Manual resets apply at the start of the listed tick to every then-living entity. ON draws a fresh weight, OFF removes it. Subsequent inheritance can change either state.",
+          patterns: "Distinct sets of stored ON inputs, including those in excluded activities. Numeric weight and bias values do not affect pattern identity.",
+          effectivePatterns: "Inverse Simpson diversity (one divided by the sum of squared pattern frequencies)",
+          dominantPatternShare: "Fraction of living entities carrying the most frequent stored switch pattern",
+          leadingPattern: "ON/OFF bit string in connection order when there is one most frequent pattern. leadingPatternCount reports ties.",
+          connectionHistogram: "Each bin counts living entities with that many stored ON inputs",
+          weightSigns: "Counts among living carriers for each input, in connection order. An ON weight of zero counts as zero.",
+          mutations: "Numerical changes to copied biases and surviving ON weights",
+          switchFlips: "Inherited switches that changed state, including newly created weights",
+          activeConnections: "Stored ON inputs at the end of the tick, including newborns",
+          effectiveActiveConnections: "Stored ON inputs in enabled activities at the end of the tick",
+          maintainedConnections: "Effective ON inputs of entities that paid persistence, before decisions and reproduction",
+          connectionMaintenancePaid: "Total energy paid for effective ON inputs at the persistence stage of this tick",
+        },
         coefficientStatistics: ["mean", "populationStandardDeviation", "minimum", "maximum"],
-        history: this.history, entities: this.entities.map(entityState),
+        history: this.history, entities: this.entities.map(entity => entityState(entity, enabled, this.tick)),
         cells: this.cells.map(({q, r, food}) => ({q, r, food})),
       };
     }
@@ -592,7 +763,7 @@ const Petri = (() => {
 
   return {
     VERSION,
-    Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
+    Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
     Random, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
   };
 })();

@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const {test} = require("node:test");
 const {
-  Simulation, Random, ACTIVITY_ENABLED_KEYS, DEFAULT_PARAMS, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
+  Simulation, Random, ACTIVITY_ENABLED_KEYS, DEFAULT_SETUP, DEFAULT_PARAMS, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
 } = require("../src/model.js");
 
 const approx = (actual, expected) => assert.ok(
@@ -26,7 +26,7 @@ function quiet(params = {}, setup = {}) {
   return new Simulation({
     entropy: deterministicEntropy(),
     setup: {radius: 0, founders: 1, initialEnergy: 5, ...setup},
-    params: {foodMean: 0, suddenDeath: 0, persistence: 0, mutationRate: 0, ...params},
+    params: {foodMean: 0, suddenDeath: 0, persistence: 0, connectionCost: 0, mutationRate: 0, switchMutationRate: 0, ...params},
   });
 }
 
@@ -41,9 +41,14 @@ test("the default dish has 91 hexes and 30 distinct, viable founders", () => {
   assert.equal(sim.cells.filter(cell => cell.neighbors.length === 6).length, 61);
   assert.equal(new Set(sim.entities.map(entity => entity.cell)).size, 30);
   assert.equal(sim.minMass, 0.1);
+  assert.equal(sim.history[0].activeConnections, 450);
+  assert.equal(sim.history[0].effectiveActiveConnections, 450);
+  assert.deepEqual(sim.history[0].connectionOnFractions, Array(15).fill(1));
   for (const entity of sim.entities) {
     approx(entity.surface, 2 * Math.sqrt(Math.PI * 10));
     assert.equal(entity.genes.length, 20);
+    assert.ok(entity.genes.every(Number.isFinite));
+    assert.deepEqual(sim.inspect(entity.cell, entity.id).entity.connectionSwitches, Array(15).fill(true));
     assert.equal(entity.energy, 40);
   }
 });
@@ -151,7 +156,7 @@ test("decision readouts average the probabilities used before execution and omit
   assert.deepEqual(initial.meanDecisionProbabilities, [null, null, null, null, null]);
   assert.equal(sim.inspect(parent.cell, parent.id).entity.lastDecisionProbabilities, null);
   plan(parent, -3, 100, -500, -500, 200);
-  parent.genes.set([0.1, 0.25, 0.5], 1);
+  [parent.genes[1], parent.genes[2], parent.genes[3]] = [0.1, 0.25, 0.5];
   plan(other, -3);
 
   const result = sim.step();
@@ -313,6 +318,289 @@ test("disabled coefficients pass intact to parent and offspring during mutation"
     assert.deepEqual(entity.genes.slice(12, 16), original.slice(12, 16));
     assert.notDeepEqual(entity.genes.slice(0, 4), original.slice(0, 4));
   }
+});
+
+test("flips discard or create weights without a second numeric mutation or a dormant value", () => {
+  const sim = quiet({switchMutationRate: 1, mutationRate: 1}, {weightRange: 0.02});
+  const original = sim.entities[0].genes.map((_, i) => i % 4 ? 90 + i : 0);
+  const off = sim.inherit(original);
+  assert.deepEqual(off, original.map((value, i) => i % 4 ? null : value));
+  assert.equal(sim.stats.switchFlips, 15);
+  assert.equal(sim.stats.mutations, 0);
+
+  sim.applyParameters({switchMutationRate: 0});
+  let draws = 0;
+  sim.random.unit = () => { draws++; return 0.75; };
+  assert.deepEqual(sim.inherit(off), off);
+  assert.equal(draws, 5); // The five biases are the only numerical copies.
+  assert.equal(sim.stats.switchFlips, 15);
+
+  sim.applyParameters({switchMutationRate: 1});
+  draws = 0;
+  const fresh = sim.inherit(off);
+  assert.deepEqual(fresh, original.map((_, i) => i % 4 ? 0.01 : 0));
+  assert.deepEqual(off, original.map((value, i) => i % 4 ? null : value));
+  assert.equal(draws, 5 + 15 + 15); // Bias checks, switch checks, fresh weights.
+  assert.equal(sim.stats.switchFlips, 30);
+  assert.equal(sim.stats.mutations, 0);
+});
+
+test("parent and offspring copy switches independently from the same original pattern", () => {
+  const sim = quiet({mutateParent: true, switchMutationRate: 0.5, mutationWidth: 0});
+  const parent = sim.entities[0];
+  const original = parent.genes.slice();
+  let draws = 0;
+  sim.random.unit = () => draws++ < 15 ? 0.25 : 0.75;
+  const newborns = [];
+  assert.ok(sim.reproduce(parent, newborns));
+  assert.equal(draws, 30);
+  assert.deepEqual(newborns[0].genes, original.map((value, i) => i % 4 ? null : value));
+  assert.deepEqual(parent.genes, original);
+  assert.equal(sim.stats.switchFlips, 15);
+  assert.equal(sim.stats.mutations, 0);
+});
+
+test("persistence charges only effective ON inputs, even zero weights, before independent decisions", () => {
+  const allOff = Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, false]));
+  const sim = quiet({...allOff, growthEnabled: true, movementEnabled: true, connectionCost: 0.25, persistence: 0.1},
+    {initialEnergy: 12});
+  const entity = sim.entities[0];
+  plan(entity);
+  entity.genes[5] = null; // Growth has two ON inputs, movement three.
+  entity.genes[4] = -12;
+  entity.genes[6] = 1;
+  let rolls = 0;
+  sim.random.logUniform = () => { rolls++; return -0.1; };
+  const both = sim.step();
+  assert.equal(rolls, 2);
+  assert.equal(both.activeConnections, 14);
+  assert.equal(both.effectiveActiveConnections, 5);
+  assert.equal(both.connectionMaintenancePaid, 1.25);
+  assert.equal(entity.energy, 9.75);
+  approx(both.meanDecisionProbabilities[1], 1 / (1 + Math.exp(2.25)));
+
+  sim.applyParameters({movementEnabled: false});
+  const one = sim.step();
+  assert.equal(rolls, 3);
+  assert.equal(one.effectiveActiveConnections, 2);
+  assert.equal(one.connectionMaintenancePaid, 0.5);
+  assert.equal(entity.energy, 8.25);
+  assert.equal(one.meanDecisionProbabilities[3], null);
+  approx(one.meanDecisionProbabilities[1], 1 / (1 + Math.exp(3.75)));
+  assert.deepEqual(one.excludedActivities, ["Excretion", "Shrinking", "Movement", "Reproduction"]);
+
+  sim.applyParameters({growthEnabled: false});
+  const none = sim.step();
+  assert.equal(rolls, 3);
+  assert.equal(none.effectiveActiveConnections, 0);
+  assert.equal(none.connectionMaintenancePaid, 0);
+  assert.equal(entity.energy, 7.25);
+  assert.deepEqual(none.meanDecisionProbabilities, Array(5).fill(null));
+
+  sim.applyParameters({movementEnabled: true});
+  const resumed = sim.step();
+  assert.equal(rolls, 4);
+  assert.equal(resumed.connectionMaintenancePaid, 0.75);
+  assert.equal(resumed.activeConnections, 14);
+  assert.equal(resumed.effectiveActiveConnections, 3);
+  assert.equal(resumed.meanDecisionProbabilities[3], both.meanDecisionProbabilities[3]);
+  assert.equal(entity.energy, 5.5);
+});
+
+test("an entity unable to pay the entire connection bill dies before decisions; exact payment survives", () => {
+  const sim = quiet({connectionCost: 0.25, persistence: 0.1}, {radius: 1, founders: 2});
+  const [survivor, other] = sim.entities;
+  for (const entity of sim.entities) plan(entity);
+  survivor.energy = 4.75;
+  other.energy = 4.74;
+  const result = sim.step();
+  assert.equal(result.persistenceDeaths, 1);
+  assert.equal(result.decisionCount, 1);
+  assert.equal(survivor.energy, 0);
+  assert.equal(result.connectionMaintenancePaid, 3.75);
+  assert.equal(result.foodRecycled, other.mass);
+});
+
+test("excluding an activity preserves mixed switches, biases and ON weights through division and re-enabling", () => {
+  const allOff = Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, false]));
+  for (const mutateParent of [false, true]) {
+    const sim = quiet({...allOff, movementEnabled: true, reproductionEnabled: true, connectionCost: 0.25,
+      mutationRate: 1, switchMutationRate: 1, mutateParent}, {radius: 1, initialEnergy: 28});
+    const parent = sim.entities[0];
+    plan(parent, -500, -500, -500, 100, -500);
+    parent.genes[13] = null;
+    parent.genes[15] = -0.5;
+    const movement = parent.genes.slice(12, 16);
+    assert.equal(sim.step().connectionMaintenancePaid, 1.25);
+
+    sim.applyParameters({movementEnabled: false});
+    parent.genes[16] = 500;
+    const divided = sim.step();
+    assert.equal(divided.births, 1);
+    assert.equal(divided.switchFlips, mutateParent ? 6 : 3);
+    assert.equal(divided.mutations, mutateParent ? 2 : 1);
+    assert.equal(divided.connectionMaintenancePaid, 0.75);
+    assert.equal(divided.maintainedConnections, 3);
+    assert.equal(divided.meanDecisionProbabilities[3], null);
+    assert.deepEqual(divided.activities[3], {selected: 0, attempted: 0, succeeded: 0});
+    for (const entity of sim.entities) assert.deepEqual(entity.genes.slice(12, 16), movement);
+
+    sim.applyParameters({movementEnabled: true, reproductionEnabled: false});
+    const resumed = sim.step();
+    assert.equal(resumed.decisionCount, 2);
+    assert.equal(resumed.activities[3].succeeded, 2);
+    assert.equal(resumed.meanDecisionProbabilities[3], 1);
+    assert.equal(resumed.effectiveActiveConnections, 4);
+    assert.equal(resumed.connectionMaintenancePaid, 1);
+    const exported = JSON.parse(JSON.stringify(sim.exportResults()));
+    assert.equal(exported.initialParameters.switchMutationRate, 1);
+    assert.equal(exported.appliedParameters.connectionCost, 0.25);
+    assert.deepEqual(exported.parameterChanges, [
+      {tick: 2, values: {movementEnabled: false}},
+      {tick: 3, values: {movementEnabled: true, reproductionEnabled: false}},
+    ]);
+    assert.equal(exported.history[2].totals.switchFlips, divided.switchFlips);
+    assert.equal(exported.history[2].totals.mutations, divided.mutations);
+    for (const entity of exported.entities) {
+      assert.deepEqual(entity.connectionSwitches.slice(9, 12), [false, true, true]);
+      assert.deepEqual(entity.coefficients.slice(12, 16), movement);
+      assert.equal(entity.effectiveActiveConnections, 2);
+      assert.equal(entity.lastDecisionProbabilities[4], null);
+      assert.equal(entity.lastDecisionTick, 3);
+    }
+  }
+});
+
+test("coefficient distributions use only carriers and distinguish OFF, a zero weight, and extinction", () => {
+  const sim = quiet({excretionEnabled: false}, {radius: 1, founders: 3});
+  const [first, second, third] = sim.entities;
+  first.genes[1] = null;
+  second.genes[1] = 0;
+  third.genes[1] = 4;
+  for (const entity of sim.entities) entity.genes[2] = null;
+  const record = sim.record();
+  assert.deepEqual(record.genes[1], [2, 2, 0, 4]);
+  assert.deepEqual(record.genes[2], Array(4).fill(null));
+  assert.deepEqual(record.connectionOnFractions.slice(0, 3), [2/3, 0, 1]);
+  assert.equal(record.activeConnections, 41);
+  assert.equal(record.effectiveActiveConnections, 36);
+  const inspected = sim.inspect(second.cell, second.id).entity;
+  assert.deepEqual(inspected.connectionSwitches.slice(0, 3), [true, false, true]);
+  assert.deepEqual(inspected.coefficients.slice(1, 3), [0, null]);
+  sim.applyParameters({suddenDeath: 1});
+  const empty = sim.step();
+  assert.deepEqual(empty.connectionOnFractions, Array(15).fill(null));
+  assert.equal(empty.activeConnections, 0);
+  assert.ok(empty.genes.every(distribution => distribution.every(value => value === null)));
+});
+
+test("zero switch-error rate preserves the original numerical inheritance and draw sequence", () => {
+  const sim = quiet({mutationRate: 0.4, switchMutationRate: 0, connectionCost: 0});
+  const original = sim.entities[0].genes;
+  const reference = new Random();
+  reference.state.set(sim.random.state);
+  const expected = original.map(value =>
+    reference.unit() < sim.params.mutationRate ? mutateValue(value, sim.params, reference) : value);
+  assert.deepEqual(sim.inherit(original), expected);
+  assert.deepEqual(sim.random.state, reference.state);
+  assert.equal(sim.stats.switchFlips, 0);
+});
+
+test("a sparse founder tree changes only the chosen inputs in the seeded preview", () => {
+  const setup = {radius: 1, founders: 4};
+  const baseline = quiet({}, setup);
+  const startingGeneSwitches = Object.fromEntries(Object.keys(DEFAULT_SETUP.startingGeneSwitches).map(key => [key, false]));
+  startingGeneSwitches["movement.energy"] = true;
+  const sparse = quiet({}, {...setup, startingGeneSwitches});
+  for (let i = 0; i < sparse.entities.length; i++) {
+    const founder = sparse.entities[i];
+    assert.equal(founder.cell, baseline.entities[i].cell);
+    for (let j = 0; j < founder.genes.length; j++) {
+      assert.equal(founder.genes[j], j % 4 === 0 || j === 14 ? baseline.entities[i].genes[j] : null);
+    }
+  }
+  assert.equal(sparse.history[0].activeConnections, 4);
+  assert.equal(sparse.history[0].connectionHistogram[1], 4);
+  assert.equal(sparse.history[0].distinctPatterns, 1);
+  assert.deepEqual(sparse.geneSwitchChanges, []);
+  const partial = quiet({}, {startingGeneSwitches: {"growth.mass": false}});
+  assert.equal(partial.history[0].activeConnections, 14);
+});
+
+test("manual edits clear or redraw every targeted weight once at the start of the tick", () => {
+  const sim = quiet({connectionCost: 0.125, growthEnabled: false}, {radius: 1, founders: 3, initialEnergy: 25});
+  for (const entity of sim.entities) plan(entity);
+  sim.entities[0].genes[5] = null;
+  const old = sim.entities.map(entity => entity.genes.slice());
+  const reset = sim.step({"growth.mass": true, "movement.energy": false});
+  assert.equal(reset.maintainedConnections, 3 * 11);
+  assert.equal(reset.connectionMaintenancePaid, 3 * 11 * 0.125);
+  const draws = sim.entities.map(entity => entity.genes[5]);
+  assert.equal(new Set(draws).size, 3);
+  assert.ok(draws.every(weight => Math.abs(weight) <= 0.01 && weight !== 0));
+  for (let i = 0; i < sim.entities.length; i++) {
+    const expected = old[i].slice();
+    expected[5] = draws[i];
+    expected[14] = null;
+    assert.deepEqual(sim.entities[i].genes, expected);
+  }
+  assert.equal(reset.geneSwitchReset, true);
+  assert.equal(reset.mutations + reset.switchFlips, 0);
+  assert.equal(sim.step().geneSwitchReset, false);
+  assert.deepEqual(sim.entities.map(entity => entity.genes[5]), draws);
+  const data = JSON.parse(JSON.stringify(sim.exportResults()));
+  assert.equal(data.setup.startingGeneSwitches["movement.energy"], true);
+  assert.equal(data.appliedGeneSwitches["movement.energy"], false);
+  assert.deepEqual(data.geneSwitchChanges, [{tick: 1, values: {"growth.mass": true, "movement.energy": false},
+    population: 3, weightsDrawn: 3, weightsRemoved: 3}]);
+  assert.equal(data.history[0].activeConnections, 45);
+});
+
+test("offspring can mutate a manually cleared input in the same tick", () => {
+  const sim = quiet({switchMutationRate: 1}, {initialEnergy: 20});
+  const parent = sim.entities[0];
+  plan(parent, -500, -500, -500, -500, 500);
+  const frame = sim.step({"reproduction.mass": false});
+  assert.equal(frame.births, 1);
+  assert.equal(frame.switchFlips, 15);
+  assert.equal(frame.mutations, 0);
+  assert.equal(parent.genes[17], null);
+  assert.ok(Number.isFinite(sim.entities[1].genes[17]));
+  assert.equal(frame.connectionOnFractions[12], 0.5);
+  assert.equal(sim.geneSwitchChanges[0].population, 1);
+});
+
+test("diversity distinguishes switch identities and sign statistics include only ON carriers", () => {
+  const sim = quiet({excretionEnabled: false}, {radius: 1, founders: 4});
+  for (const entity of sim.entities) {
+    for (let i = 0; i < entity.genes.length; i++) if (i % 4) entity.genes[i] = null;
+  }
+  sim.entities[0].genes[1] = -10;
+  sim.entities[1].genes[1] = 0.25;
+  sim.entities[2].genes[2] = 0;
+  const stats = sim.record();
+  assert.equal(stats.distinctPatterns, 3);
+  approx(stats.effectivePatterns, 8/3);
+  assert.equal(stats.dominantPatternShare, 0.5);
+  assert.equal(stats.leadingPattern, "1" + "0".repeat(14));
+  assert.equal(stats.leadingPatternCount, 1);
+  assert.deepEqual(stats.connectionHistogram, [1, 3, ...Array(14).fill(0)]);
+  assert.deepEqual(stats.weightSigns.negative.slice(0, 3), [1, 0, 0]);
+  assert.deepEqual(stats.weightSigns.zero.slice(0, 3), [0, 1, 0]);
+  assert.deepEqual(stats.weightSigns.positive.slice(0, 3), [1, 0, 0]);
+  sim.entities[2].genes[2] = null;
+  const tied = sim.record();
+  assert.equal(tied.distinctPatterns, 2);
+  assert.equal(tied.effectivePatterns, 2);
+  assert.equal(tied.leadingPatternCount, 2);
+  assert.equal(tied.leadingPattern, null);
+  sim.applyParameters({suddenDeath: 1});
+  const empty = sim.step();
+  assert.equal(empty.distinctPatterns, 0);
+  assert.equal(empty.effectivePatterns, null);
+  assert.equal(empty.dominantPatternShare, null);
+  assert.equal(empty.leadingPatternCount, 0);
+  assert.deepEqual(empty.connectionHistogram, Array(16).fill(0));
 });
 
 test("observation leaves evolution unchanged and population and food accounting hold", () => {

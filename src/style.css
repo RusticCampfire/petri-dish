@@ -26,6 +26,7 @@ button:disabled, input:disabled, select:disabled { cursor: default; opacity: .5;
 [hidden] { display: none !important; }
 
 .dish-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dish-version { color: var(--soft); font: 500 .62em var(--mono); letter-spacing: 0; white-space: nowrap; }
 .brand-mark {
   position: relative;
   width: 40px;
@@ -118,14 +119,12 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 .run-notice { margin-top: 12px; color: var(--accent-bright); font-size: 12px; }
 .run-notice.error { color: var(--danger); }
 .parameters-title { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 20px; }
-.playback > .parameters-title { flex-wrap: wrap; }
 .parameters > .parameters-title { padding: 15px 14px 13px; }
-.preset-panel { display: grid; gap: 6px; padding: 10px 14px; }
-.preset-panel label { font-size: 12px; font-weight: 620; }
-.preset-panel select { width: 100%; }
+.preset-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--line); }
+.preset-row label { font-size: 12px; font-weight: 620; }
+.preset-row select { width: 100%; min-width: 0; }
 .live { display: inline-flex; align-items: center; gap: 5px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .055em; }
 .live i { width: 6px; height: 6px; }
-.pending { padding: 0 14px 10px; color: var(--accent-bright); font-size: 11px; }
 .parameter-group { border-top: 1px solid var(--line); }
 .parameter-group summary, .entity-genes summary, .observation-summary {
   display: flex;
@@ -153,6 +152,21 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 details[open] > summary::before { transform: rotate(45deg) translateY(-1px); }
 summary:hover { background: #ffffff06; }
 .summary-meta { margin-left: auto; color: var(--soft); font-size: 10px; font-weight: 450; }
+.gene-tree, .gene-tree ul { list-style: none; margin: 0; padding: 0; }
+.gene-tree { padding: 2px 13px; }
+.gene-tree ul { margin: 0 0 3px 4px; padding-left: 10px; border-left: 1px solid var(--border); }
+.gene-row { display: flex; gap: 6px; align-items: center; min-height: 30px; }
+.gene-row input { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.gene-disclosure, .gene-row label { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; text-align: left; }
+.gene-disclosure { border: 0; background: transparent; color: var(--ink); padding: 2px 0; gap: 8px; font-size: 1rem; }
+.gene-tree > li > .gene-row .gene-disclosure { font-weight: 620; }
+.gene-disclosure::before { content: ""; flex: 0 0 6px; height: 6px; box-sizing: border-box; border: solid var(--soft); border-width: 0 1px 1px 0; transform: rotate(-45deg); }
+.gene-disclosure[aria-expanded=true]::before { transform: rotate(45deg); }
+.gene-disclosure:hover, .gene-row label:hover { color: var(--accent-bright); }
+.gene-count { color: var(--muted); font: .85rem var(--mono); }
+.gene-row label { color: var(--muted); padding-left: 3px; font-size: 1rem; cursor: pointer; }
+.gene-help { font-size: .86rem; margin: 6px 0 10px; color: var(--muted); }
+.gene-reset-status { color: var(--accent-bright); }
 .knobs { padding: 0 13px 12px; }
 .knob {
   display: grid;
@@ -210,7 +224,11 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .tabs button[aria-pressed=true] { background: #3b3827; color: #f2dab2; }
 .tabs button:hover { color: var(--ink); }
 .chart-wrap { height: 158px; margin: 0 9px; }
-#history { display: block; width: 100%; height: 100%; }
+#history, #connection-history { display: block; width: 100%; height: 100%; }
+#connection-trend { border-top: 1px solid var(--line); padding-top: 6px; }
+#connection-trend .label-line { margin: 0 15px; }
+#connection-fraction { color: var(--purple); }
+.fraction-chart { height: 80px; margin: 0 9px; }
 .chart-legend { color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; min-height: 32px; padding: 1px 15px 9px; font-size: 10px; }
 .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .chart-legend i { display: inline-block; background: var(--swatch); width: 9px; height: 3px; border-radius: 3px; }
@@ -238,7 +256,13 @@ select { padding: 4px 6px; font-size: 11px; }
 .readout-grid span, .entity-values span { display: block; color: var(--muted); font-size: 10px; }
 .readout-grid strong, .entity-values strong { display: block; color: var(--ink); font: 13px var(--mono); margin-top: 4px; overflow-wrap: anywhere; }
 .readout-grid.compact { margin-top: 12px; }
-.resource-panel .readout-grid, .activity-panel .readout-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.resource-panel .readout-grid, .connection-readings { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.totals-title { font-size: 12px; margin: 12px 0 0; }
+.activity-panel .readout-grid { margin-top: 4px; }
+.activity-log { margin-top: 6px; border-top: 1px solid var(--line); }
+.activity-log summary { min-height: 25px; padding: 3px 0; color: var(--muted); font-size: 12px; }
+.activity-log ol { max-height: 9rem; overflow-y: auto; list-style: none; padding: 0; margin: 3px 0 8px; font-size: 12px; }
+.activity-log li + li { margin-top: 3px; }
 .subtle { color: var(--soft); font-size: 10px; white-space: nowrap; }
 .activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 54px 42px 28px 28px; align-items: center; gap: 4px; }
 .activity-head { align-items: end; padding: 9px 0 4px; color: var(--soft); font-size: 10px; line-height: 1.2; }
@@ -256,13 +280,35 @@ select { padding: 4px 6px; font-size: 11px; }
 #entity-select { width: 100%; }
 .entity-values { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; margin-top: 10px; }
 .population-genetics h3 { margin: 0; font-size: 12px; font-weight: 620; }
+.weight-signs { color: var(--muted); margin: 0 15px 10px; font-size: .9rem; }
+.pattern-stats { border-top: 1px solid var(--line); margin-top: 12px; }
+.pattern-stats summary { padding: 9px 0 3px; color: var(--ink); }
+.pattern-stats summary h3 { display: inline; font-size: 1rem; }
+.pattern-readings { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; padding-top: 7px; }
+.pattern-readings span { display: block; color: var(--muted); font-size: .9rem; }
+.pattern-readings strong { display: block; margin-top: 2px; color: var(--mint); font: 1.1rem var(--mono); }
+.pattern-leader { color: var(--muted); margin: 8px 0; font-size: .9rem; }
+.connection-distribution { margin: 12px 0 0; }
+.connection-distribution figcaption { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 1rem; }
+.connection-distribution output { color: var(--mint); font: .85rem var(--mono); }
+.gene-bins { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(1.1rem, 1fr); gap: 3px; overflow-x: auto; padding: 4px 2px; }
+.gene-bins button { display: grid; grid-template-rows: 42px auto; gap: 3px; align-items: end; justify-items: stretch; position: relative; padding: 0; color: var(--muted); border: 0; background: transparent; font: .85rem var(--mono); }
+.gene-bins button::before { content: ""; grid-area: 1 / 1; align-self: stretch; background: var(--panel-top); border-bottom: 1px solid var(--border); }
+.gene-bins i { grid-area: 1 / 1; background: #91a375; height: var(--height,0%); z-index: 1; }
+.gene-bins button[aria-pressed=true], .gene-bins button:hover { color: var(--accent-bright); }
+.gene-bins button[aria-pressed=true] i { background: var(--accent); }
+.gene-bins button:focus-visible { outline-offset: -2px; }
 .entity-genes { border-top: 1px solid var(--line); margin-top: 10px; }
+.connection-count { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.connection-readings small { color: var(--muted); }
 .entity-genes summary { padding: 7px 0; min-height: 29px; font-size: 11px; }
 .table-scroll { overflow-x: auto; }
 .coefficient-table { width: 100%; border-collapse: collapse; font-size: 10px; }
 .coefficient-table th, .coefficient-table td { padding: 3px 2px; text-align: right; border-bottom: 1px solid var(--line); }
 .coefficient-table th:first-child { text-align: left; }
 .coefficient-table td { font-family: var(--mono); white-space: nowrap; }
+.coefficient-table td small { display: block; color: var(--muted); font: 0.86rem/1.3 var(--mono); }
+.coefficient-table td small:empty { display: none; }
 .coefficient-table thead th { color: var(--muted); }
 .population-genetics .coefficient-table { font-size: 11px; }
 .population-genetics td:last-child, .entity-genes td:nth-child(2) { color: var(--mint); }
@@ -281,8 +327,7 @@ select { padding: 4px 6px; font-size: 11px; }
   .left-rail { display: contents; }
   .playback { grid-row: 1; }
   .center { grid-row: 2; }
-  .preset-panel { grid-row: 3; }
-  .parameters { grid-row: 4; }
+  .parameters { grid-row: 3; }
   .right-rail { grid-column: 1; gap: 12px; }
   .timing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 14px; }
   .timing .label-line { grid-row: 1; }

@@ -1,6 +1,6 @@
 "use strict";
 
-const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
+const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
 const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
 const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
 const CHART_WINDOW = 5000;
@@ -20,6 +20,8 @@ const percent = new Intl.NumberFormat("en", {style: "percent", maximumFractionDi
 const compact = new Intl.NumberFormat("en", {notation: "compact", maximumFractionDigits: 1});
 const exact = value => value === 0 ? "0" : value.toPrecision(3);
 const controls = new Map();
+const switchRows = [];
+const histogramBins = [];
 
 const GROUPS = [
   ["Environment", true, [
@@ -35,6 +37,7 @@ const GROUPS = [
     ["energyCapacity", "Energy capacity", "E/M", 0, 16, 0.1],
     ["wasteCapacity", "Waste capacity", "W/M", 0, 10, 0.1],
     ["persistence", "Persistence cost", "E/M", 0, 1, 0.005],
+    ["connectionCost", "Connection maintenance", "E/ON/tick", 0, 0.1, 0.001],
     ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
     ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
   ]],
@@ -48,7 +51,8 @@ const GROUPS = [
     ["offspringShare", "Offspring share", "%", 1, 99, 1, {scale: 100, min: 0.01, max: 99.99}],
   ]],
   ["Inheritance", false, [
-    ["mutationRate", "Mutation chance", "%", 0, 20, 0.1, {scale: 100, max: 100}],
+    ["mutationRate", "Numerical copying error (μw)", "%", 0, 20, 0.1, {scale: 100, max: 100}],
+    ["switchMutationRate", "Switch copying error (μs)", "%", 0, 5, 0.01, {scale: 100, max: 100}],
     ["mutationWidth", "Peak width", "", 0, 1, 0.01],
     ["mutationSharpness", "Edge sharpness", "", 0.1, 32, 0.1, {max: 1000}],
     ["mutationTail", "Tail exponent", "", 1.01, 10, 0.01, {max: 1000}],
@@ -65,7 +69,7 @@ const SETUP_KNOBS = [
   ["initialFood", "Starting food", "F/hex", 0, 20, 0.25],
   ["biasLow", "Bias lower bound", "", -12, 12, 0.1, {min: -1000000}],
   ["biasHigh", "Bias upper bound", "", -12, 12, 0.1, {min: -1000000}],
-  ["weightRange", "Weight range ±", "", 0, 0.1, 0.001],
+  ["weightRange", "Founder & activation range ±", "", 0, 0.1, 0.001],
 ];
 
 let worker;
@@ -77,10 +81,12 @@ let setupLocked = false;
 let failed = false;
 let checkpoint = false;
 let pauseAtTick = DEFAULT_PAUSE_TICK;
-let setup = {...DEFAULT_SETUP};
+let setup = {...DEFAULT_SETUP, startingGeneSwitches: {...DEFAULT_SETUP.startingGeneSwitches}};
 let params = {...DEFAULT_PARAMS};
-let appliedParams = {};
 let snapshot = null;
+let latestSummary = null;
+let selectedBin = null;
+let geneRevision = 0;
 let history = [];
 let lastFrame = 0;
 let watch = {cell: 45, entityId: null, token: 0};
@@ -92,6 +98,7 @@ let inspectedAt = 0;
 let chart = "genetics";
 let occupantOptions = "";
 let lastLegend = "";
+let lastExcluded = null;
 
 function post(type, details = {}) {
   if (worker) worker.postMessage({type, runId, ...details});
@@ -229,14 +236,86 @@ function setLiveParameters(values) {
     Object.entries(MODEL_PRESETS[name]).every(([key, value]) => params[key] === value)
   );
   $("model-preset").value = selected ?? "";
-  showPending();
 }
 
-function showPending() {
-  $("pending-note").hidden = !setupLocked || Object.keys(params).every(key => params[key] === appliedParams[key]);
+function syncGeneTree() {
+  for (const {keys, checkbox, count} of switchRows) {
+    const selected = keys.filter(key => setup.startingGeneSwitches[key]).length;
+    checkbox.checked = selected === keys.length;
+    checkbox.indeterminate = selected > 0 && selected < keys.length;
+    if (count) count.textContent = selected + "/" + keys.length;
+  }
+}
+
+function mountGeneNode(node, list, ancestors = []) {
+  const item = document.createElement("li");
+  const row = document.createElement("div");
+  row.className = "gene-row";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  const path = [...ancestors, node.label];
+  const root = !ancestors.length;
+  let keys;
+  let count;
+  item.append(row);
+  list.append(item);
+  if (node.children) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "gene-disclosure";
+    toggle.textContent = node.label;
+    const group = document.createElement("div");
+    group.id = "gene-branch-" + path.join("-").toLowerCase().replaceAll(" ", "-");
+    group.hidden = true;
+    toggle.setAttribute("aria-controls", group.id);
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.addEventListener("click", () => {
+      group.hidden = !group.hidden;
+      toggle.setAttribute("aria-expanded", String(!group.hidden));
+    });
+    count = document.createElement("span");
+    count.className = "gene-count";
+    count.title = "Selected inputs in this branch";
+    checkbox.setAttribute("aria-label", root ? "All gene switches" : "All " + node.label.toLowerCase() + " inputs");
+    row.append(toggle, count, checkbox);
+    const children = document.createElement("ul");
+    group.append(children);
+    item.append(group);
+    keys = node.children.flatMap(child => mountGeneNode(child, children, path));
+    if (root) {
+      const help = document.createElement("p");
+      help.className = "gene-help";
+      help.textContent = "Founders use these switches. During a run, OFF clears the selected weights and ON redraws them for every entity at the next tick. Descendants can still mutate them.";
+      const status = document.createElement("p");
+      status.id = "gene-reset-status";
+      status.className = "gene-help gene-reset-status";
+      status.setAttribute("role", "status");
+      status.hidden = true;
+      group.append(help, status);
+    }
+  } else {
+    keys = [node.key];
+    checkbox.id = "gene-" + node.key.replaceAll(".", "-");
+    checkbox.setAttribute("aria-label", path.slice(1).join(" · "));
+    const label = document.createElement("label");
+    label.htmlFor = checkbox.id;
+    label.textContent = node.label;
+    row.append(label, checkbox);
+  }
+  switchRows.push({keys, checkbox, count});
+  checkbox.addEventListener("change", () => {
+    const values = Object.fromEntries(keys.map(key => [key, checkbox.checked]));
+    Object.assign(setup.startingGeneSwitches, values);
+    syncGeneTree();
+    post("gene-switches", {values, revision: ++geneRevision});
+  });
+  return keys;
 }
 
 function mountControls() {
+  mountGeneNode(GENE_TREE, $("gene-tree"));
+  syncGeneTree();
+  mountHistogram();
   for (const [name, open, knobs] of GROUPS) {
     const detail = document.createElement("details");
     detail.className = "parameter-group";
@@ -246,6 +325,12 @@ function mountControls() {
     const content = document.createElement("div");
     content.className = "knobs";
     for (const knob of knobs) content.append(makeKnob(knob, params, "live"));
+    if (name === "Inheritance") {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "Switching OFF discards the weight. Switching ON draws a fresh weight uniformly from the founder range.";
+      content.append(note);
+    }
     detail.append(summary, content);
     $("runtime-controls").append(detail);
   }
@@ -272,21 +357,28 @@ function mountControls() {
   const historySelect = $("gene-select");
   for (const name of new Set(["Reproduction", "Movement", ...ACTIVITIES])) {
     const activity = ACTIVITIES.indexOf(name);
+    const group = document.createElement("optgroup");
+    group.label = name;
     const probability = new Option(name + " · Mean probability", "probability-" + activity);
     probability.dataset.probabilityActivity = String(activity);
-    historySelect.add(probability);
+    group.append(probability);
     for (let j = 0; j < COEFFICIENTS.length; j++) {
-      historySelect.add(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
+      group.append(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
     }
+    historySelect.append(group);
   }
+  const patterns = document.createElement("optgroup");
+  patterns.label = "Switch patterns";
+  patterns.append(new Option("Pattern diversity", "patterns"), new Option("Most common pattern share", "dominance"));
+  historySelect.append(patterns);
   const reproduction = ACTIVITIES.indexOf("Reproduction");
   const bias = COEFFICIENTS.indexOf("Bias");
   historySelect.value = String(reproduction * COEFFICIENTS.length + bias);
-  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages");
-  mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients");
+  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages", 1);
+  mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients", 2);
 }
 
-function mountActivityTable(id, columns, name) {
+function mountActivityTable(id, columns, name, firstWeightColumn) {
   const table = document.createElement("table");
   table.className = "coefficient-table";
   table.setAttribute("aria-label", name);
@@ -307,10 +399,28 @@ function mountActivityTable(id, columns, name) {
     for (let j = 0; j < columns.length; j++) {
       const cell = row.insertCell();
       cell.id = id + "-" + i + "-" + j;
-      cell.textContent = "—";
+      if (j >= firstWeightColumn && j < firstWeightColumn + COEFFICIENTS.length - 1) {
+        cell.append(document.createElement("span"), document.createElement("small"));
+      } else {
+        cell.textContent = "—";
+      }
     }
   }
   $(id).append(table);
+}
+
+function connectionIndex(activity, coefficient) {
+  return activity * (COEFFICIENTS.length - 1) + coefficient - 1;
+}
+
+function writeWeight(cell, value, detail) {
+  cell.firstElementChild.textContent = value;
+  cell.lastElementChild.textContent = detail;
+}
+
+function formatOnFraction(fraction) {
+  if (fraction === 0 || fraction === 1) return percent.format(fraction);
+  return formatProbability(fraction);
 }
 
 function formatProbability(value) {
@@ -335,6 +445,10 @@ function newRun() {
   checkpoint = false;
   commandPending = false;
   snapshot = null;
+  latestSummary = null;
+  selectedBin = null;
+  geneRevision = 0;
+  $("gene-reset-status").hidden = true;
   history = [];
   normalizeSetup();
   chooseCenter();
@@ -347,6 +461,7 @@ function renderStatus(reason, tick) {
   checkpoint = reason === "checkpoint";
   failed = reason === "error";
   running = reason === "running";
+  setFaviconRunning(running);
   setupLocked = running || tick > 0 || failed || reason === "loading";
   const active = $("run-status");
   active.className = "status " + reason;
@@ -369,7 +484,6 @@ function renderStatus(reason, tick) {
   notice.hidden = !checkpoint && !failed;
   notice.classList.toggle("error", failed);
   if (checkpoint) notice.textContent = "Paused at tick " + int.format(tick) + ". Resume to continue.";
-  showPending();
 }
 
 function speedValue() { return SPEEDS[$("speed").valueAsNumber]; }
@@ -389,7 +503,7 @@ function presentFrame(data) {
   if (data.runId !== runId || data.frame < lastFrame) return;
   lastFrame = data.frame;
   snapshot = data.snapshot;
-  appliedParams = data.params;
+  latestSummary = data.summary;
   if (data.watchToken === watch.token) {
     inspector = snapshot.inspect;
     inspectedAt = snapshot.tick;
@@ -399,7 +513,6 @@ function presentFrame(data) {
   renderDish();
   renderInspector();
   renderHistory();
-  showPending();
 }
 
 function receive({data}) {
@@ -418,13 +531,25 @@ function receive({data}) {
     case "frame":
       if (data.replaceHistory) {
         history = [];
+        lastExcluded = null;
+        $("exclusion-history").replaceChildren();
       }
       for (const record of data.records) {
         history.push({
           tick: record.tick, population: record.population, food: record.food, energy: record.energy,
           waste: record.waste, genes: record.genes.map(([mean, sd]) => [mean, sd]),
           meanDecisionProbabilities: record.meanDecisionProbabilities,
+          connectionOnFractions: record.connectionOnFractions,
+          distinctPatterns: record.distinctPatterns, effectivePatterns: record.effectivePatterns,
+          dominantPatternShare: record.dominantPatternShare, geneSwitchReset: record.geneSwitchReset,
         });
+        const excluded = record.excludedActivities.join(", ");
+        if (lastExcluded !== excluded) {
+          const item = document.createElement("li");
+          item.textContent = "Tick " + int.format(record.tick) + " · " + (excluded ? excluded + " excluded" : "All activities enabled");
+          $("exclusion-history").prepend(item);
+          lastExcluded = excluded;
+        }
       }
       if (history.length > CHART_WINDOW) history.splice(0, history.length - CHART_WINDOW);
       if (data.debug && document.visibilityState === "visible") {
@@ -439,9 +564,13 @@ function receive({data}) {
         if (data.debug) post("painted", {frame: data.frame});
       }
       break;
-    case "applied":
-      appliedParams = data.params;
-      showPending();
+    case "genes-applied":
+      if (data.change) {
+        const {tick, weightsDrawn, weightsRemoved} = data.change;
+        write("gene-reset-status", "Tick " + int.format(tick) + " · " + int.format(weightsDrawn)
+          + " weights drawn · " + int.format(weightsRemoved) + " removed");
+        $("gene-reset-status").hidden = false;
+      }
       break;
     case "inspector":
       if (data.watchToken !== watch.token) break;
@@ -496,9 +625,12 @@ function renderGauges(summary, minimum) {
   write("deaths-sudden", int.format(summary.totals.suddenDeaths));
   write("deaths-persistence", int.format(summary.totals.persistenceDeaths));
   write("mutations", int.format(summary.totals.mutations));
+  write("switch-flips", int.format(summary.totals.switchFlips));
+  write("excluded-status", summary.excludedActivities.length
+    ? "Excluded · " + summary.excludedActivities.join(", ") : "All activities enabled");
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const stats = summary.activities[i];
-    const enabled = appliedParams[ACTIVITY_ENABLED_KEYS[i]];
+    const enabled = !summary.excludedActivities.includes(ACTIVITIES[i]);
     write("activity-probability-" + i, formatProbability(summary.meanDecisionProbabilities[i]));
     write("activity-selected-" + i, enabled ? int.format(stats.selected) : "—");
     write("activity-attempted-" + i, enabled ? int.format(stats.attempted) : "—");
@@ -510,13 +642,76 @@ function renderPopulationGenetics(summary) {
   write("population-decision-count", summary.decisionCount
     ? int.format(summary.decisionCount) + (summary.decisionCount === 1 ? " entity decided" : " entities decided")
     : "No decisions this tick");
+  write("mean-stored-connections", summary.population ? dec.format(summary.activeConnections / summary.population) : "—");
+  write("mean-effective-connections", summary.population ? dec.format(summary.effectiveActiveConnections / summary.population) : "—");
+  write("connection-upkeep", axisValue(summary.connectionMaintenancePaid) + " E");
+  write("maintained-connections", int.format(summary.maintainedConnections)
+    + (summary.maintainedConnections === 1 ? " connection" : " connections"));
   for (let i = 0; i < ACTIVITIES.length; i++) {
-    for (let j = 0; j < COEFFICIENTS.length; j++) {
+    const bias = summary.genes[i * COEFFICIENTS.length][0];
+    write("population-genes-table-" + i + "-0", bias === null ? "—" : exact(bias));
+    for (let j = 1; j < COEFFICIENTS.length; j++) {
       const [mean] = summary.genes[i * COEFFICIENTS.length + j];
-      write("population-genes-table-" + i + "-" + j, mean === null ? "—" : exact(mean));
+      const fraction = summary.connectionOnFractions[connectionIndex(i, j)];
+      writeWeight($("population-genes-table-" + i + "-" + j), mean === null ? "—" : exact(mean),
+        fraction === null ? "" : formatOnFraction(fraction) + " ON");
     }
     write("population-genes-table-" + i + "-" + COEFFICIENTS.length,
       formatProbability(summary.meanDecisionProbabilities[i]));
+  }
+  write("distinct-patterns", int.format(summary.distinctPatterns));
+  write("effective-patterns", summary.effectivePatterns === null ? "—" : dec.format(summary.effectivePatterns));
+  write("dominant-share", formatOnFraction(summary.dominantPatternShare));
+  write("leading-pattern", describeLeadingPattern(summary));
+  renderHistogram(summary);
+}
+
+function describeLeadingPattern({leadingPattern, leadingPatternCount}) {
+  if (!leadingPatternCount) return "No living entities.";
+  if (leadingPatternCount > 1) return int.format(leadingPatternCount) + " patterns share the lead.";
+  if (!leadingPattern.includes("0")) return "Most common pattern · All inputs ON";
+  if (!leadingPattern.includes("1")) return "Most common pattern · All inputs OFF";
+  const inputs = COEFFICIENTS.slice(1);
+  const groups = [];
+  for (let i = 0; i < ACTIVITIES.length; i++) {
+    const on = inputs.filter((_, j) => leadingPattern[connectionIndex(i, j + 1)] === "1");
+    if (on.length) groups.push(ACTIVITIES[i] + " (" + on.join(", ") + ")");
+  }
+  return "Most common pattern · " + groups.join(" · ");
+}
+
+function mountHistogram() {
+  const length = Object.keys(DEFAULT_SETUP.startingGeneSwitches).length;
+  for (let i = 0; i <= length; i++) {
+    const bin = document.createElement("button");
+    bin.type = "button";
+    const bar = document.createElement("i");
+    bar.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = i;
+    bin.append(bar, label);
+    bin.addEventListener("click", () => {
+      selectedBin = i;
+      if (latestSummary) renderHistogram(latestSummary);
+    });
+    histogramBins.push(bin);
+    $("gene-histogram").append(bin);
+  }
+}
+
+function renderHistogram({connectionHistogram: bins, population}) {
+  const peak = Math.max(...bins);
+  const selected = selectedBin ?? bins.indexOf(peak);
+  for (let i = 0; i < bins.length; i++) {
+    const button = histogramBins[i];
+    const count = bins[i];
+    const label = i + " ON · " + int.format(count) + (count === 1 ? " entity" : " entities")
+      + (population ? " (" + formatOnFraction(count / population) + ")" : "");
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", String(i === selected && population > 0));
+    button.style.setProperty("--height", (peak ? 100 * count / peak : 0) + "%");
+    if (i === selected) write("histogram-value", population ? label : "No living entities");
   }
 }
 
@@ -690,12 +885,16 @@ function renderInspector() {
   write("entity-waste", dec.format(selected.waste));
   write("entity-origin", "Generation " + int.format(selected.generation) + " · Born at tick " + int.format(selected.born)
     + (selected.parentId ? " · Parent " + int.format(selected.parentId) : " · Founder"));
+  write("entity-connections", "Connections · " + selected.activeConnections + " ON · " + selected.effectiveActiveConnections + " effective");
   const probabilities = selected.lastDecisionProbabilities;
-  write("entity-decision-tick", probabilities ? "Tick " + int.format(inspectedAt) : "No decisions this tick");
+  write("entity-decision-tick", selected.lastDecisionTick === null ? "No decisions this tick" : "Tick " + int.format(selected.lastDecisionTick));
   for (let i = 0; i < ACTIVITIES.length; i++) {
     write("entity-genes-table-" + i + "-0", formatProbability(probabilities?.[i] ?? null));
-    for (let j = 0; j < COEFFICIENTS.length; j++) {
-      write("entity-genes-table-" + i + "-" + (j + 1), exact(selected.coefficients[i * COEFFICIENTS.length + j]));
+    write("entity-genes-table-" + i + "-1", exact(selected.coefficients[i * COEFFICIENTS.length]));
+    for (let j = 1; j < COEFFICIENTS.length; j++) {
+      const weight = selected.coefficients[i * COEFFICIENTS.length + j];
+      writeWeight($("entity-genes-table-" + i + "-" + (j + 1)), weight === null ? "OFF" : exact(weight),
+        weight === null ? "" : "ON");
     }
   }
 }
@@ -738,6 +937,12 @@ function renderHistory() {
   const metric = $("gene-select").selectedOptions[0];
   const probabilityActivity = metric.dataset.probabilityActivity;
   const probabilityChart = chart === "genetics" && probabilityActivity !== undefined;
+  const gene = Number(metric.value);
+  const coefficientChart = chart === "genetics" && Number.isInteger(gene);
+  const dominanceChart = chart === "genetics" && metric.value === "dominance";
+  const coefficientIndex = gene % COEFFICIENTS.length;
+  const inputChart = coefficientChart && coefficientIndex !== 0;
+  $("connection-trend").hidden = !inputChart;
   const first = history[0].tick;
   const last = history.at(-1).tick;
   let series;
@@ -763,8 +968,18 @@ function renderHistory() {
     }];
     legend = series;
     write("history-caption", "Mean decision probability by tick");
+  } else if (metric.value === "patterns") {
+    series = [
+      {name: "Distinct patterns", color: "#ccdfa4", values: history.map(record => record.distinctPatterns)},
+      {name: "Effective patterns", color: "#bc9ecf", values: history.map(record => record.effectivePatterns)},
+    ];
+    legend = series;
+    write("history-caption", "Diversity of inherited switch patterns by tick");
+  } else if (dominanceChart) {
+    series = [{name: "Largest share", color: "#eeb463", values: history.map(record => record.dominantPatternShare)}];
+    legend = series;
+    write("history-caption", "Share of the population with the most common pattern");
   } else {
-    const gene = Number(metric.value);
     const coefficient = history.map(record => record.genes[gene]);
     series = [
       {name: "Mean", color: "#ccdfa4", values: coefficient.map(([mean]) => mean)},
@@ -772,16 +987,36 @@ function renderHistory() {
       {name: "Lower", color: "#8c9c6b", values: coefficient.map(([mean, sd]) => mean === null ? null : mean - sd)},
     ];
     legend = [series[0], {name: "±1 standard deviation", color: "#8c9c6b"}];
-    write("history-caption", "Inherited coefficient by tick");
+    write("history-caption", inputChart ? "Weight among entities with this connection ON" : "Inherited bias by tick");
   }
   if (first > 0) $("history-caption").textContent += " · Latest " + int.format(CHART_WINDOW) + " ticks";
   const lastPoint = series[0].values.at(-1);
-  const formatValue = probabilityChart ? formatProbability : axisValue;
-  const noValue = probabilityChart ? ". No probability recorded at this tick." : ". No surviving entities.";
+  const formatValue = dominanceChart ? formatOnFraction : probabilityChart ? formatProbability : axisValue;
+  const noValue = probabilityChart ? ". No probability recorded at this tick."
+    : inputChart ? ". No living entity has this connection ON." : ". No surviving entities.";
   $("history").setAttribute("aria-label", series[0].name + " from tick " + first + " to " + last
     + (lastPoint === null ? noValue : ". Latest value " + formatValue(lastPoint) + "."));
-  drawLegend(legend);
-  drawChart(context, series, first, last, probabilityChart);
+  const resets = chart === "genetics" ? history.filter(record => record.geneSwitchReset).map(record => record.tick) : [];
+  drawLegend(resets.length ? [...legend, {name: "Manual gene reset", color: "#d6a76c"}] : legend);
+  const kind = coefficientChart ? "coefficient" : probabilityChart ? "probability" : dominanceChart ? "fraction" : chart;
+  drawChart(context, series, first, last, kind, resets);
+  if (inputChart) {
+    const index = connectionIndex(Math.floor(gene / COEFFICIENTS.length), coefficientIndex);
+    const values = history.map(record => record.connectionOnFractions[index]);
+    const latest = formatOnFraction(values.at(-1));
+    write("connection-fraction", latest);
+    if (latestSummary) {
+      const signs = latestSummary.weightSigns;
+      const carriers = signs.negative[index] + signs.zero[index] + signs.positive[index];
+      write("weight-signs", carriers ? "Among carriers · " + formatOnFraction(signs.negative[index] / carriers)
+        + " negative · " + formatOnFraction(signs.zero[index] / carriers) + " zero · "
+        + formatOnFraction(signs.positive[index] / carriers) + " positive" : "No living entity carries this weight.");
+    }
+    const canvas = $("connection-history");
+    canvas.setAttribute("aria-label", metric.text + " connection ON from tick " + first + " to " + last + ". Latest fraction " + latest);
+    const fractionContext = canvasContext(canvas);
+    if (fractionContext) drawChart(fractionContext, [{color: "#bc9ecf", values}], first, last, "fraction", resets);
+  }
 }
 
 function drawLegend(legend) {
@@ -797,10 +1032,11 @@ function drawLegend(legend) {
   }));
 }
 
-function drawChart({ctx, width, height}, series, first, last, probabilityChart) {
-  const coefficientBand = chart === "genetics" && !probabilityChart;
-  const [min, max] = plotRange(series, !coefficientBand, probabilityChart ? 0.01 : 1);
-  const formatAxis = probabilityChart ? percent.format : axisValue;
+function drawChart({ctx, width, height}, series, first, last, kind, resets) {
+  const coefficientBand = kind === "coefficient";
+  const fraction = kind === "fraction";
+  const [min, max] = fraction ? [0, 1] : plotRange(series, !coefficientBand, kind === "probability" ? 0.01 : 1);
+  const formatAxis = fraction || kind === "probability" ? percent.format : axisValue;
   const left = 47;
   const right = width - 13;
   const top = 9;
@@ -813,8 +1049,9 @@ function drawChart({ctx, width, height}, series, first, last, probabilityChart) 
   ctx.fillStyle = "#aaa895";
   ctx.strokeStyle = "#3a3e30";
   ctx.lineWidth = 1;
-  for (let mark = 0; mark <= 4; mark++) {
-    const value = min + (max - min) * mark / 4;
+  const marks = fraction ? 2 : 4;
+  for (let mark = 0; mark <= marks; mark++) {
+    const value = min + (max - min) * mark / marks;
     const position = y(value);
     ctx.fillText(formatAxis(value), left - 6, position);
     ctx.beginPath();
@@ -832,20 +1069,40 @@ function drawChart({ctx, width, height}, series, first, last, probabilityChart) 
   ctx.beginPath();
   ctx.rect(left - 3, top - 5, right - left + 6, bottom - top + 9);
   ctx.clip();
+  if (resets.length) {
+    ctx.beginPath();
+    ctx.strokeStyle = "#d6a76c";
+    ctx.setLineDash([2, 4]);
+    for (const tick of resets) {
+      const position = x(tick - first);
+      ctx.moveTo(position, top);
+      ctx.lineTo(position, bottom);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   if (coefficientBand) {
     const upper = series[1].values;
     const lower = series[2].values;
-    const lastValid = upper.findLastIndex(Number.isFinite);
-    const firstValid = upper.findIndex(Number.isFinite);
-    if (lastValid >= 0) {
-      ctx.beginPath();
-      ctx.moveTo(x(firstValid), y(upper[firstValid]));
-      for (let i = firstValid + 1; i <= lastValid; i++) ctx.lineTo(x(i), y(upper[i]));
-      for (let i = lastValid; i >= firstValid; i--) ctx.lineTo(x(i), y(lower[i]));
+    ctx.beginPath();
+    let start = 0;
+    while (start < upper.length) {
+      if (!Number.isFinite(upper[start]) || !Number.isFinite(lower[start])) {
+        start++;
+        continue;
+      }
+      let end = start + 1;
+      ctx.moveTo(x(start), y(upper[start]));
+      while (end < upper.length && Number.isFinite(upper[end]) && Number.isFinite(lower[end])) {
+        ctx.lineTo(x(end), y(upper[end]));
+        end++;
+      }
+      for (let i = end - 1; i >= start; i--) ctx.lineTo(x(i), y(lower[i]));
       ctx.closePath();
-      ctx.fillStyle = "#b9ce8239";
-      ctx.fill();
+      start = end;
     }
+    ctx.fillStyle = "#b9ce8239";
+    ctx.fill();
   }
   const lines = coefficientBand ? series.slice(0, 1) : series;
   for (const line of lines) {
@@ -946,6 +1203,85 @@ function mountEvents() {
   new ResizeObserver(renderHistory).observe($("history"));
 }
 
+function mountFavicon() {
+  const mark = document.querySelector(".brand-mark");
+  const style = getComputedStyle(mark);
+  const ring = getComputedStyle(mark, "::before");
+  const size = parseFloat(style.width);
+  const center = size / 2;
+  const borderWidth = parseFloat(style.borderTopWidth);
+  const ringWidth = parseFloat(ring.borderTopWidth);
+  const ringRadius = center - borderWidth - parseFloat(ring.top) - ringWidth / 2;
+  const cells = Array.from(mark.children, element => {
+    const cell = getComputedStyle(element);
+    const radius = parseFloat(cell.width) / 2;
+    return {
+      x: parseFloat(cell.left) + borderWidth + radius - center,
+      y: parseFloat(cell.top) + borderWidth + radius - center,
+      radius, color: cell.backgroundColor, opacity: Number(cell.opacity),
+    };
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return () => {};
+  ctx.scale(canvas.width / size, canvas.height / size);
+
+  const inset = borderWidth / 2;
+  const edge = size - inset;
+  const radius = parseFloat(style.borderTopLeftRadius) - inset;
+  const outline = new Path2D();
+  outline.moveTo(inset + radius, inset);
+  outline.arcTo(edge, inset, edge, edge, radius);
+  outline.arcTo(edge, edge, inset, edge, radius);
+  outline.arcTo(inset, edge, inset, inset, radius);
+  outline.arcTo(inset, inset, edge, inset, radius);
+  outline.closePath();
+
+  const frameCount = 16;
+  const frames = Array.from({length: frameCount}, (_, frame) => {
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = style.backgroundColor;
+    ctx.fill(outline);
+    ctx.strokeStyle = style.borderTopColor;
+    ctx.lineWidth = borderWidth;
+    ctx.stroke(outline);
+    ctx.beginPath();
+    ctx.arc(center, center, ringRadius, 0, 2 * Math.PI);
+    ctx.lineWidth = ringWidth;
+    ctx.strokeStyle = ring.borderTopColor;
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate(2 * Math.PI * frame / frameCount);
+    for (const cell of cells) {
+      ctx.beginPath();
+      ctx.arc(cell.x, cell.y, cell.radius, 0, 2 * Math.PI);
+      ctx.fillStyle = cell.color;
+      ctx.globalAlpha = cell.opacity;
+      ctx.fill();
+    }
+    ctx.restore();
+    return canvas.toDataURL("image/png");
+  });
+  const favicon = $("favicon");
+  let frame = 0;
+  let timer = null;
+  favicon.href = frames[frame];
+  return isRunning => {
+    if (!isRunning) {
+      clearInterval(timer);
+      timer = null;
+    } else if (timer === null) {
+      timer = setInterval(() => {
+        frame = (frame + 1) % frames.length;
+        favicon.href = frames[frame];
+      }, 150);
+    }
+  };
+}
+
 function launch() {
   mountControls();
   const source = new Blob([$("worker-source").textContent], {type: "text/javascript"});
@@ -962,4 +1298,5 @@ function launch() {
   newRun();
 }
 
+const setFaviconRunning = mountFavicon();
 launch();

@@ -7,18 +7,16 @@
   <meta name="application-version" content="%%VERSION%%">
   <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
   <title>Petri Dish Evolution Simulator</title>
+  <link id="favicon" rel="icon" type="image/png" sizes="64x64">
   <style>%%STYLE%%</style>
 </head>
 <body>
   <main class="desk" aria-label="Simulation workspace">
     <section class="left-rail" aria-label="Controls">
-      <div class="panel playback">
-        <div class="parameters-title">
-          <h2>Run controls</h2>
-          <span id="run-status" class="status">
-            <i aria-hidden="true"></i><span><span id="run-status-text" role="status">Ready</span><span id="run-tick-rate" hidden></span></span>
-          </span>
-        </div>
+      <section class="panel playback" aria-label="Run controls">
+        <span id="run-status" class="status">
+          <i aria-hidden="true"></i><span><span id="run-status-text" role="status">Ready</span><span id="run-tick-rate" hidden></span></span>
+        </span>
         <div class="transport">
           <button type="button" id="play" class="button primary" disabled><span class="icon icon-play" aria-hidden="true"></span><span>Start</span></button>
           <button type="button" id="step" class="button square" title="Advance one tick" aria-label="Advance one tick" disabled><span class="icon icon-step" aria-hidden="true"></span></button>
@@ -40,20 +38,19 @@
           </div>
         </details>
         <p id="run-notice" class="run-notice" hidden></p>
-      </div>
-
-      <div class="panel preset-panel">
-        <label for="model-preset">Presets</label>
-        <select id="model-preset">
-          <option value="" disabled hidden>Custom</option>
-          <option value="default" selected>Default</option>
-          <option value="scarce-food">Scarce food, high deviation</option>
-        </select>
-      </div>
+      </section>
 
       <div class="panel parameters">
         <div class="parameters-title"><h2>Model parameters</h2><span class="live"><i></i> Live</span></div>
-        <p id="pending-note" class="pending" role="status" hidden>Changes apply on the next tick.</p>
+        <div class="preset-row">
+          <label for="model-preset">Presets</label>
+          <select id="model-preset">
+            <option value="" disabled hidden>Custom</option>
+            <option value="default" selected>Default</option>
+            <option value="scarce-food">Scarce food, high deviation</option>
+          </select>
+        </div>
+        <div class="parameter-group gene-controls"><ul id="gene-tree" class="gene-tree" aria-label="Starting gene switches"></ul></div>
         <div id="runtime-controls"></div>
         <details class="parameter-group setup-group">
           <summary><span>Initial setup</span><span id="setup-state" class="summary-meta">New run</span></summary>
@@ -75,7 +72,7 @@
         <div class="section-head">
           <div class="dish-brand">
             <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <div><h1>Petri Dish Evolution Simulator</h1><p id="dish-caption">91 hexes · Radius 5</p></div>
+            <div><h1>Petri Dish Evolution Simulator <span class="dish-version">v%%VERSION%%</span></h1><p id="dish-caption">91 hexes · Radius 5</p></div>
           </div>
           <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
         </div>
@@ -99,17 +96,41 @@
           </div>
         </div>
         <div id="gene-select-row" class="gene-choice">
-          <label for="gene-select">Activity metric</label><select id="gene-select"></select>
+          <label for="gene-select">Genetics metric</label><select id="gene-select"></select>
         </div>
         <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
         <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
+        <div id="connection-trend" hidden>
+          <div class="label-line"><span>Connection ON</span><output id="connection-fraction"></output></div>
+          <div class="fraction-chart"><canvas id="connection-history" role="img" aria-label="Fraction of living entities with the connection ON"></canvas></div>
+          <p class="weight-signs" id="weight-signs"></p>
+        </div>
         <section id="population-genetics" class="population-genetics" aria-labelledby="population-genetics-title">
           <div class="parameters-title">
             <h3 id="population-genetics-title">Population averages</h3>
             <span id="population-decision-count" class="subtle"></span>
           </div>
           <div id="population-genes-table" class="table-scroll"></div>
-          <p class="note">Coefficients cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+          <p class="note">Weight means cover entities with that connection ON. Biases cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+          <div class="readout-grid connection-readings">
+            <div><span>ON per entity</span><strong id="mean-stored-connections">—</strong></div>
+            <div title="ON connections belonging to enabled activities"><span>Effective per entity</span><strong id="mean-effective-connections">—</strong></div>
+            <div title="Total connection maintenance paid during persistence, before reproduction"><span>Upkeep paid this tick</span><strong id="connection-upkeep">—</strong><small id="maintained-connections"></small></div>
+          </div>
+          <details class="pattern-stats" open>
+            <summary><h3>Switch pattern diversity</h3></summary>
+            <div class="pattern-readings">
+              <div><span>Distinct patterns</span><strong id="distinct-patterns">—</strong></div>
+              <div title="Inverse Simpson diversity. Two equally common patterns give an effective count of two."><span>Effective patterns</span><strong id="effective-patterns">—</strong></div>
+              <div><span>Largest share</span><strong id="dominant-share">—</strong></div>
+            </div>
+            <p id="leading-pattern" class="pattern-leader"></p>
+            <figure class="connection-distribution">
+              <figcaption><span>ON connections per entity</span><output id="histogram-value"></output></figcaption>
+              <div id="gene-histogram" class="gene-bins" role="group" aria-label="Living entities by number of ON connections"></div>
+            </figure>
+            <p class="note">Patterns use all stored switches, including excluded activities. The effective count gives more weight to common patterns.</p>
+          </details>
         </section>
       </div>
     </section>
@@ -119,11 +140,14 @@
         <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
         <div class="activity-head"><span>Activity</span><span>Mean probability</span><span>Selected</span><span>Tried</span><span>Done</span></div>
         <div id="activity-list"></div>
+        <details class="activity-log"><summary title="Show activity settings by tick"><span id="excluded-status">All activities enabled</span></summary><ol id="exclusion-history" aria-label="Activity settings by tick"></ol></details>
         <p class="note">Reproduction can skip selected activities.</p>
+        <h3 class="totals-title">Run totals</h3>
         <div class="readout-grid compact">
           <div><span>Sudden deaths</span><strong id="deaths-sudden">—</strong></div>
           <div><span>Persistence deaths</span><strong id="deaths-persistence">—</strong></div>
-          <div><span>Mutations</span><strong id="mutations">—</strong></div>
+          <div><span>Numerical mutations</span><strong id="mutations">—</strong></div>
+          <div><span>Switch flips</span><strong id="switch-flips">—</strong></div>
         </div>
       </div>
 
@@ -143,6 +167,7 @@
             <div><span>Waste</span><strong id="entity-waste"></strong></div>
           </div>
           <div class="note" id="entity-origin"></div>
+          <div class="connection-count" id="entity-connections"></div>
           <details class="entity-genes" open>
             <summary>Decision coefficients <span id="entity-decision-tick" class="summary-meta"></span></summary>
             <div id="entity-genes-table" class="table-scroll" role="region" aria-label="Decision coefficients and probabilities" tabindex="0"></div>
