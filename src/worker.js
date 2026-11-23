@@ -1,6 +1,11 @@
 "use strict";
 
-const {Simulation, DEFAULT_PAUSE_TICK} = Petri;
+// The single-file offline build supplies these scripts before the worker.
+if (typeof Petri === "undefined") importScripts("./model.js", "./run-file.js");
+
+const {Simulation, DEFAULT_PAUSE_TICK, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS,
+  savedPlayback} = Petri;
+const {saveRunFile, readRunFile} = PetriRunFile;
 const TICK_RATE_INTERVAL = 750;
 let simulation;
 let runId = 0;
@@ -16,20 +21,33 @@ let refresh = 500;
 let nextTick = 0;
 let lastFrame = 0;
 let tickRateSample = null;
-let pending = {};
-let pendingGenes = null;
+let geneRevision = null;
 let watch = {cell: 45, entityId: null, token: 0};
+let fileBusy = false;
 
 function publish({debug = false, replaceHistory = false} = {}) {
   if (replaceHistory) historyIndex = 0;
   const frame = ++sequence;
   const snapshot = simulation.snapshot(watch.cell, watch.entityId);
-  const records = simulation.history.slice(historyIndex);
+  const firstRecord = Math.max(historyIndex, simulation.history.length - CHART_WINDOW);
+  const records = simulation.history.slice(firstRecord);
+  const priorActivityStats = firstRecord > historyIndex
+    ? simulation.history.slice(Math.max(0, firstRecord + 1 - SUCCESS_RATE_AVERAGE_TICKS), firstRecord).map(row => row.activities)
+    : null;
+  const earlierExclusions = [];
+  let previous;
+  for (let i = historyIndex; i < firstRecord; i++) {
+    const {tick, excludedActivities} = simulation.history[i];
+    const key = excludedActivities.join(",");
+    if (key === previous) continue;
+    earlierExclusions.push({tick, excludedActivities});
+    previous = key;
+  }
   historyIndex = simulation.history.length;
   lastFrame = performance.now();
   if (debug) waitingForFrame = frame;
   postMessage({
-    type: "frame", runId, frame, debug, replaceHistory, records, snapshot,
+    type: "frame", runId, frame, debug, replaceHistory, records, snapshot, earlierExclusions, priorActivityStats,
     watchToken: watch.token, params: simulation.params, minimumMass: simulation.minMass,
     summary: simulation.history.at(-1),
   });
@@ -66,20 +84,24 @@ function schedule(delay) {
 }
 
 function advance() {
-  if (Object.keys(pending).length) {
-    simulation.applyParameters(pending);
-    pending = {};
-  }
-  simulation.step(pendingGenes?.values);
-  if (pendingGenes) {
-    postMessage({type: "genes-applied", runId, revision: pendingGenes.revision, change: simulation.geneSwitchChanges.at(-1)});
-    pendingGenes = null;
+  simulation.step();
+  if (geneRevision !== null) {
+    postMessage({type: "genes-applied", runId, revision: geneRevision, change: simulation.geneSwitchChanges.at(-1)});
+    geneRevision = null;
   }
   if (pauseAtTick > 0 && simulation.tick === pauseAtTick) {
     stop();
     return true;
   }
   return false;
+}
+
+function previewFounders(setup, params) {
+  const preview = new Simulation({setup, params, seed: simulation.globalSeed});
+  preview.pendingParameters = simulation.pendingParameters;
+  preview.pendingGeneSwitches = simulation.pendingGeneSwitches;
+  simulation = preview;
+  publish({replaceHistory: true});
 }
 
 function reportFailure(error) {
@@ -120,6 +142,55 @@ function pump() {
   }
 }
 
+async function exportRun(requestRunId) {
+  if (failure) throw new Error("There is no completed run to export after a simulation error.");
+  const data = simulation.exportResults();
+  data.checkpoint.playback = {speed, refresh, pauseAtTick};
+  const compress = data.history.length > CHART_WINDOW || data.entities.length > CHART_WINDOW;
+  const {blob, gzip} = await saveRunFile(data, compress);
+  if (runId === requestRunId) postMessage({type: "export", runId, blob, gzip, tick: data.tick});
+}
+
+async function importRun(data) {
+  const saved = await readRunFile(data.file);
+  if (data.runId !== runId) return;
+  const restored = Simulation.fromResults(saved);
+  const playback = savedPlayback(saved.checkpoint?.playback) ?? {speed, refresh, pauseAtTick};
+  if (data.nextRunId !== runId + 1) throw new Error("Invalid run identifier.");
+
+  // Replace the active simulation only after the entire file has been validated.
+  stop();
+  simulation = restored;
+  runId = data.nextRunId;
+  failure = false;
+  ({speed, refresh, pauseAtTick} = playback);
+  geneRevision = simulation.pendingGeneSwitches ? 0 : null;
+  watch = {cell: (simulation.cells.length - 1) / 2, entityId: null, token: 0};
+  postMessage({
+    type: "imported", runId: data.runId, nextRunId: runId, tick: simulation.tick, watch, playback,
+    setup: {...simulation.setup, startingGeneSwitches: {...simulation.appliedGeneSwitches, ...simulation.pendingGeneSwitches}},
+    params: {...simulation.params, ...simulation.pendingParameters},
+    legacy: !saved.checkpoint,
+  });
+  publish({replaceHistory: true});
+  status("paused");
+}
+
+async function handleRunFile(data) {
+  if (fileBusy) return;
+  fileBusy = true;
+  try {
+    if (data.type === "export") await exportRun(data.runId);
+    else await importRun(data);
+  } catch (error) {
+    if (data.runId === runId) {
+      postMessage({type: "file-error", runId, operation: data.type, message: error.message});
+    }
+  } finally {
+    fileBusy = false;
+  }
+}
+
 self.onmessage = ({data}) => {
   try {
     if (data.type === "reset") {
@@ -127,8 +198,7 @@ self.onmessage = ({data}) => {
       runId = data.runId;
       pauseAtTick = data.pauseAtTick ?? DEFAULT_PAUSE_TICK;
       failure = false;
-      pending = {};
-      pendingGenes = null;
+      geneRevision = null;
       watch = data.watch;
       speed = data.speed;
       refresh = data.refresh;
@@ -142,34 +212,24 @@ self.onmessage = ({data}) => {
       case "setup":
         if (!running && !simulation.tick && !failure) {
           watch = data.watch;
-          simulation = new Simulation({
-            setup: data.setup, params: simulation.params, seed: simulation.globalSeed,
-          });
-          publish({replaceHistory: true});
+          previewFounders(data.setup, simulation.params);
         }
         break;
       case "tune":
         if (!running && !simulation.tick && !failure) {
-          simulation = new Simulation({
-            setup: data.setup ?? simulation.setup, params: {...simulation.params, ...data.values}, seed: simulation.globalSeed,
-          });
-          publish({replaceHistory: true});
+          previewFounders(data.setup ?? simulation.setup, {...simulation.params, ...data.values});
         } else {
-          Object.assign(pending, data.values);
+          simulation.queueParameters(data.values);
         }
         break;
       case "gene-switches":
         if (!running && !simulation.tick && !failure) {
-          simulation = new Simulation({
-            setup: {...simulation.setup, startingGeneSwitches: {...simulation.setup.startingGeneSwitches, ...data.values}},
-            params: simulation.params, seed: simulation.globalSeed,
-          });
-          publish({replaceHistory: true});
+          const setup = {...simulation.setup, startingGeneSwitches: {...simulation.setup.startingGeneSwitches, ...data.values}};
+          previewFounders(setup, simulation.params);
           postMessage({type: "genes-applied", runId, revision: data.revision});
         } else {
-          pendingGenes ??= {values: {}, revision: 0};
-          Object.assign(pendingGenes.values, data.values);
-          pendingGenes.revision = data.revision;
+          simulation.queueGeneSwitches(data.values);
+          geneRevision = data.revision;
         }
         break;
       case "display":
@@ -222,11 +282,9 @@ self.onmessage = ({data}) => {
           inspector: simulation.inspect(watch.cell, watch.entityId),
         });
         break;
-      case "export": {
-        const blob = new Blob([JSON.stringify(simulation.exportResults())], {type: "application/json"});
-        postMessage({type: "export", blob, tick: simulation.tick, runId});
-        break;
-      }
+      case "export":
+      case "import":
+        return handleRunFile(data);
     }
   } catch (error) {
     reportFailure(error);

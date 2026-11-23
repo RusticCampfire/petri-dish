@@ -92,11 +92,11 @@
           <div class="tabs" role="group" aria-label="History metric">
             <button type="button" data-chart="population" aria-pressed="false">Population</button>
             <button type="button" data-chart="resources" aria-pressed="false">Resources</button>
-            <button type="button" data-chart="genetics" aria-pressed="true">Genetics</button>
+            <button type="button" data-chart="entities" aria-pressed="true">Entities</button>
           </div>
         </div>
-        <div id="gene-select-row" class="gene-choice">
-          <label for="gene-select">Genetics metric</label><select id="gene-select"></select>
+        <div id="entity-metric-row" class="entity-metric-choice">
+          <label for="entity-metric">Entity metric</label><select id="entity-metric"></select>
         </div>
         <div class="chart-wrap"><canvas id="history" aria-label="Run history chart" role="img"></canvas></div>
         <div id="chart-legend" class="chart-legend" aria-label="Chart legend"></div>
@@ -111,7 +111,31 @@
             <span id="population-decision-count" class="subtle"></span>
           </div>
           <div id="population-genes-table" class="table-scroll"></div>
-          <p class="note">Weight means cover entities with that connection ON. Biases cover all living entities. Probabilities cover entities that made decisions this tick.</p>
+          <p class="note">Weight means cover entities with that connection ON. Biases cover all living entities. Probabilities cover entities that made decisions this tick. Success rate is Done ÷ Tried.</p>
+          <figure id="activity-sigmoid" class="sigmoid-figure" aria-labelledby="sigmoid-title">
+            <figcaption class="sigmoid-head">
+              <strong id="sigmoid-title">Reproduction sigmoid</strong>
+              <div class="sigmoid-control">
+                <label for="sigmoid-input">X-axis</label>
+                <select id="sigmoid-input">
+                  <option value="weighted">Weighted input</option>
+                  <option value="mass">Mass</option>
+                  <option value="energy">Energy</option>
+                  <option value="waste">Waste</option>
+                </select>
+              </div>
+            </figcaption>
+            <div class="sigmoid-plot">
+              <canvas id="sigmoid-curve" role="img" aria-label="Reproduction sigmoid"></canvas>
+              <p id="sigmoid-empty" hidden>No living entities to average.</p>
+            </div>
+            <div id="sigmoid-caption" class="sigmoid-caption">
+              <span id="sigmoid-axis-label">Weighted input before bias</span>
+              <span id="sigmoid-spread" class="sigmoid-spread" hidden><i aria-hidden="true"></i> ±1 standard deviation <strong id="sigmoid-spread-range"></strong></span>
+              <span id="sigmoid-estimate" class="sigmoid-estimate" hidden><i aria-hidden="true"></i> <span id="sigmoid-point-label"></span> <strong id="sigmoid-probability"></strong></span>
+            </div>
+            <p id="sigmoid-detail" class="note"></p>
+          </figure>
           <div class="readout-grid connection-readings">
             <div><span>ON per entity</span><strong id="mean-stored-connections">—</strong></div>
             <div title="ON connections belonging to enabled activities"><span>Effective per entity</span><strong id="mean-effective-connections">—</strong></div>
@@ -138,7 +162,9 @@
     <aside class="right-rail" aria-label="Observation gauges">
       <div class="panel activity-panel">
         <div class="parameters-title"><h2>Activities</h2><span class="subtle">This tick</span></div>
-        <div class="activity-head"><span>Activity</span><span>Mean probability</span><span>Selected</span><span>Tried</span><span>Done</span></div>
+        <div class="activity-head">
+          <span>Activity</span><span>Mean probability</span><span>Selected</span><span>Tried</span><span>Done</span><span title="Done ÷ Tried">Success rate</span>
+        </div>
         <div id="activity-list"></div>
         <details class="activity-log"><summary title="Show activity settings by tick"><span id="excluded-status">All activities enabled</span></summary><ol id="exclusion-history" aria-label="Activity settings by tick"></ol></details>
         <p class="note">Reproduction can skip selected activities.</p>
@@ -189,10 +215,13 @@
     </aside>
   </main>
   <footer class="page-actions">
+%%DOWNLOADS%%
+    <button id="import" class="button" type="button" disabled>Import run</button>
     <button id="export" class="button" type="button" disabled><span class="icon icon-download" aria-hidden="true"></span><span>Export results</span></button>
+    <input id="import-file" type="file" accept=".json,.json.gz,application/json,application/gzip" hidden>
+    <p id="file-status" class="file-status" role="status"></p>
   </footer>
   <noscript><p class="noscript">Enable JavaScript to run Petri Dish.</p></noscript>
-  <script type="text/plain" id="worker-source">%%WORKER%%</script>
-  <script>%%APP%%</script>
+  %%SCRIPTS%%
 </body>
 </html>

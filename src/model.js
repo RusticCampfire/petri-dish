@@ -1,7 +1,9 @@
 "use strict";
 
+// Petri Dish's simulation engine. In Node.js, require("./model.js") exposes
+// the same Simulation class used by the browser worker. One step is one tick.
 const Petri = (() => {
-  const VERSION = "0.3";
+  const VERSION = "0.4.1";
   const ACTIVITY_NAMES = {
     excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
     movementEnabled: "Movement", reproductionEnabled: "Reproduction",
@@ -29,19 +31,24 @@ const Petri = (() => {
   CONNECTIONS.forEach((gene, index) => { INPUT_AT[gene.coefficient] = index; });
   const DEFAULT_SETUP = Object.freeze({
     radius: 5, founders: 30, initialMass: 10, initialEnergy: 40, initialWaste: 0,
-    initialFood: 0, biasLow: -3, biasHigh: -1.5, weightRange: 0.01,
-    startingGeneSwitches: Object.freeze(Object.fromEntries(CONNECTIONS.map(({key}) => [key, true]))),
+    initialFood: 0, biasLow: -3, biasHigh: -1.5, weightRange: 5,
+    startingGeneSwitches: Object.freeze(Object.fromEntries(CONNECTIONS.map(({key}) => [key, key === "reproduction.energy"]))),
   });
   const DEFAULT_PARAMS = Object.freeze({
     foodMean: 2, foodSD: 1.5, intake: 0.35, energyPerFood: 1, energyWasteRatio: 2,
     foodPerMass: 1, energyCapacity: 8, wasteCapacity: 4, persistence: 0.15, connectionCost: 0.01,
-    excretionRate: 1.2, excretionCost: 0.05, growthFraction: 0.1, shrinkFraction: 0.1,
+    failedAttemptFraction: 0.01, excretionRate: 1.2, excretionCost: 0.05,
+    growthFraction: 0.1, shrinkFraction: 0.1,
     growthSpread: 0.2, movementCost: 0.02, reproductionCost: 2, divisionLoss: 0.1,
-    offspringShare: 0.5, suddenDeath: 0.002, mutationRate: 0.01, switchMutationRate: 0.001, mutationWidth: 0.2,
+    offspringShare: 0.5, suddenDeath: 0.008, mutationRate: 0.01, switchMutationRate: 0, mutationWidth: 0.2,
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
     ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
   const DEFAULT_PAUSE_TICK = 0;
+  const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
+  const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
+  const CHART_WINDOW = 5000;
+  const SUCCESS_RATE_AVERAGE_TICKS = 100;
   const LIFESPAN_WINDOW = 100;
   const DIRECTIONS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
   const UINT32 = 4294967296;
@@ -130,6 +137,10 @@ const Petri = (() => {
         : sign * Math.sign(value) * Math.exp(Math.log(Math.abs(value)) + logMagnitude);
       if (Number.isFinite(candidate)) return candidate;
     }
+  }
+
+  function sigmoid(logit, rareOdds = Math.exp(-Math.abs(logit))) {
+    return (logit < 0 ? rareOdds : 1) / (1 + rareOdds);
   }
 
   function chooseActivity(logit, random, rareOdds = Math.exp(-Math.abs(logit))) {
@@ -252,7 +263,8 @@ const Petri = (() => {
       maintainedConnections: 0, connectionMaintenancePaid: 0,
       foodProduced: 0, foodConsumed: 0, foodRecycled: 0,
       activities: ACTIVITIES.map(() => ({selected: 0, attempted: 0, succeeded: 0})),
-      decisionCount: 0, meanDecisionProbabilities: ACTIVITIES.map(() => null),
+      decisionCount: 0, meanDecisionInputs: null, decisionEnergySD: null,
+      meanDecisionProbabilities: ACTIVITIES.map(() => null),
     };
   }
 
@@ -270,6 +282,136 @@ const Petri = (() => {
       lastDecisionProbabilities: entity.lastDecisionProbabilities
         ? Array.from(entity.lastDecisionProbabilities) : null,
     };
+  }
+
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function inRange(value, min = 0, max = Infinity) {
+    return Number.isFinite(value) && value >= min && value <= max;
+  }
+
+  function isCount(value) {
+    return Number.isSafeInteger(value) && value >= 0;
+  }
+
+  function isProbability(value) {
+    return value === null || inRange(value, 0, 1);
+  }
+
+  function isList(values, size, check) {
+    return Array.isArray(values) && values.length === size && values.every(check);
+  }
+
+  function savedOptions(values, defaults, label) {
+    if (!isRecord(values)) throw new Error("Invalid " + label + " in the run file.");
+    const result = {};
+    for (const key of Object.keys(defaults)) {
+      if (!Object.hasOwn(values, key)) continue;
+      const value = values[key];
+      if (typeof value !== typeof defaults[key] || (typeof value === "number" && !Number.isFinite(value))) {
+        throw new Error("Invalid " + label + " in the run file.");
+      }
+      result[key] = value;
+    }
+    return result;
+  }
+
+  function savedParameters(values) {
+    const params = savedOptions(values, DEFAULT_PARAMS, "model parameters");
+    const fractions = ["suddenDeath", "mutationRate", "switchMutationRate", "failedAttemptFraction",
+      "growthFraction", "shrinkFraction", "divisionLoss"];
+    if (Object.values(params).some(value => typeof value === "number" && value < 0)
+      || fractions.some(key => params[key] > 1)
+      || params.offspringShare <= 0 || params.offspringShare >= 1
+      || params.energyPerFood <= 0 || params.energyWasteRatio <= 0
+      || params.mutationSharpness <= 0 || params.mutationTail <= 1) {
+      throw new Error("A model parameter in the run file is out of range.");
+    }
+    return params;
+  }
+
+  function savedGeneSwitches(values) {
+    return savedOptions(values, DEFAULT_SETUP.startingGeneSwitches, "gene switches");
+  }
+
+  function savedPlayback(playback) {
+    if (playback == null) return undefined;
+    const {speed, refresh, pauseAtTick} = playback;
+    if (!SPEEDS.includes(speed) || !REFRESHES.includes(refresh) || !isCount(pauseAtTick)) {
+      throw new Error("Invalid playback settings in the run file.");
+    }
+    return {speed, refresh, pauseAtTick};
+  }
+
+  function validateSavedHistory(history, tick) {
+    if (!Array.isArray(history) || history.length !== tick + 1 || history.some((row, index) =>
+      row?.tick !== index || !Array.isArray(row.excludedActivities)
+      || row.excludedActivities.some(name => !ACTIVITIES.includes(name)))) {
+      throw new Error("The run file has missing or invalid tick history.");
+    }
+    const geneCount = ACTIVITIES.length * COEFFICIENTS.length;
+    for (const row of history.slice(-CHART_WINDOW)) {
+      if (!isCount(row.population) || ![row.food, row.energy, row.waste].every(value => inRange(value))
+        || !isList(row.genes, geneCount, gene => isList(gene, 4, value => value === null || Number.isFinite(value)))
+        || !isList(row.meanDecisionProbabilities, ACTIVITIES.length, isProbability)
+        || !isList(row.connectionOnFractions, CONNECTIONS.length, isProbability)
+        || !isCount(row.distinctPatterns) || !(row.effectivePatterns === null || inRange(row.effectivePatterns))
+        || !isProbability(row.dominantPatternShare)) {
+        throw new Error("The run file has invalid chart data.");
+      }
+    }
+    const last = history.at(-1);
+    const inputs = last.meanDecisionInputs;
+    if (inputs != null && (!isRecord(inputs) || ![inputs.mass, inputs.energy, inputs.waste].every(value => inRange(value)))) {
+      throw new Error("The run file has invalid decision inputs.");
+    }
+    if (last.decisionEnergySD != null && (!inputs || !inRange(last.decisionEnergySD))) {
+      throw new Error("The run file has an invalid decision energy spread.");
+    }
+    const counts = ["births", "suddenDeaths", "persistenceDeaths", "mutations", "switchFlips"];
+    const stocks = ["mass", "energyCapacity", "wasteCapacity", "foodProduced", "foodConsumed",
+      "foodRecycled", "connectionMaintenancePaid"];
+    const latestCounts = ["generation", "peakPopulation", "lifespanSamples", "decisionCount", "leadingPatternCount",
+      "maintainedConnections", "activeConnections", "effectiveActiveConnections"];
+    if (!counts.every(key => isCount(last.totals?.[key]) && isCount(last[key]))
+      || !stocks.every(key => inRange(last[key])) || !latestCounts.every(key => isCount(last[key]))
+      || !(last.meanLifespan === null || inRange(last.meanLifespan))
+      || !(last.leadingPattern === null && last.leadingPatternCount !== 1
+        || typeof last.leadingPattern === "string" && /^[01]+$/.test(last.leadingPattern)
+          && last.leadingPattern.length === CONNECTIONS.length)
+      || !isList(last.connectionHistogram, CONNECTIONS.length + 1, isCount)
+      || !["negative", "zero", "positive"].every(sign => isList(last.weightSigns?.[sign], CONNECTIONS.length, isCount))
+      || !isList(last.activities, ACTIVITIES.length, activity =>
+        isCount(activity?.selected) && isCount(activity.attempted) && isCount(activity.succeeded))) {
+      throw new Error("The run file has invalid final readings.");
+    }
+    return last;
+  }
+
+  function restoreEntities(saved, simulation) {
+    const ids = new Set();
+    return saved.map(entity => {
+      const {id, cell, mass, energy, waste, parentId, founderId, generation, born, coefficients, lastDecisionProbabilities}
+        = entity ?? {};
+      if (!isCount(id) || id === 0 || ids.has(id)
+        || !isCount(cell) || cell >= simulation.cells.length
+        || ![mass, energy, waste].every(value => inRange(value)) || mass < simulation.minMass
+        || !(parentId === null || isCount(parentId) && parentId > 0 && parentId < id)
+        || !isCount(founderId) || !founderId || founderId > id
+        || !isCount(generation) || !isCount(born) || born > simulation.tick
+        || !isList(coefficients, ACTIVITIES.length * COEFFICIENTS.length, (value, i) =>
+          Number.isFinite(value) || value === null && i % COEFFICIENTS.length !== 0)
+        || !(lastDecisionProbabilities === null || isList(lastDecisionProbabilities, ACTIVITIES.length, isProbability))) {
+        throw new Error("The run file contains an invalid entity.");
+      }
+      ids.add(id);
+      return {
+        id, cell, mass, energy, waste, parentId, founderId, generation, born,
+        surface: circumference(mass), genes: coefficients, lastDecisionProbabilities, demand: 0, plan: [],
+      };
+    });
   }
 
   class Simulation {
@@ -291,6 +433,8 @@ const Petri = (() => {
       this.history = [];
       this.parameterChanges = [];
       this.geneSwitchChanges = [];
+      this.pendingParameters = null;
+      this.pendingGeneSwitches = null;
       this.totals = {births: 0, suddenDeaths: 0, persistenceDeaths: 0, mutations: 0, switchFlips: 0};
       this.recentLifespans = [];
       this.lifespanSum = 0;
@@ -300,6 +444,95 @@ const Petri = (() => {
       this.initialParams = {...this.params};
       this.makeFounders();
       this.record();
+    }
+
+    static fromResults(data, {entropy} = {}) {
+      if (data?.model !== "Petri Dish") throw new Error("Choose a Petri Dish results file.");
+      const checkpoint = data.checkpoint;
+      if (checkpoint === undefined ? !["0.3", "0.3-dev", "0.4"].includes(data.version) : checkpoint?.format !== 1) {
+        throw new Error("This version of the run file is unsupported.");
+      }
+      if (!isCount(data.tick) || !inRange(data.minimumMass) || data.minimumMass <= 0
+        || !isList(data.activityOrder, ACTIVITIES.length, (name, i) => name === ACTIVITIES[i])
+        || !isList(data.coefficientOrder, COEFFICIENTS.length, (name, i) => name === COEFFICIENTS[i])) {
+        throw new Error("The run file has invalid model data.");
+      }
+      // Preserve the previous defaults for older files that omit settings.
+      const {startingGeneSwitches = {}, ...savedSetup} = savedOptions(data.setup, DEFAULT_SETUP, "initial setup");
+      const switches = savedGeneSwitches(startingGeneSwitches);
+      const setup = {
+        ...DEFAULT_SETUP, weightRange: 0.01, ...savedSetup,
+        startingGeneSwitches: Object.fromEntries(CONNECTIONS.map(({key}) => [key, switches[key] ?? true])),
+      };
+      if (!isCount(setup.radius) || setup.radius > 30
+        || !isCount(setup.founders) || setup.founders > 1 + 3 * setup.radius * (setup.radius + 1)
+        || setup.initialMass <= 0 || setup.biasLow > setup.biasHigh
+        || [setup.initialEnergy, setup.initialWaste, setup.initialFood, setup.weightRange].some(value => value < 0)) {
+        throw new Error("The run file has an invalid initial setup.");
+      }
+      const defaults = {...DEFAULT_PARAMS, suddenDeath: 0.002, switchMutationRate: 0.001, failedAttemptFraction: 0};
+      const params = {...defaults, ...savedParameters(data.appliedParameters)};
+      const initialParams = {...defaults, ...savedParameters(data.initialParameters)};
+      if (!Array.isArray(data.parameterChanges) || !Array.isArray(data.geneSwitchChanges)) {
+        throw new Error("The run file is missing its parameter or gene switch history.");
+      }
+      const validateChange = change => {
+        if (!isCount(change?.tick) || change.tick < 1 || change.tick > data.tick) {
+          throw new Error("The run file contains an invalid settings change.");
+        }
+      };
+      const parameterChanges = data.parameterChanges.map(change => {
+        validateChange(change);
+        return {tick: change.tick, values: savedParameters(change.values)};
+      });
+      const geneSwitchChanges = data.geneSwitchChanges.map(change => {
+        validateChange(change);
+        return {...change, values: savedGeneSwitches(change.values)};
+      });
+      const last = validateSavedHistory(data.history, data.tick);
+      if (!Array.isArray(data.entities) || data.entities.length !== last.population) {
+        throw new Error("The saved population does not match the tick history.");
+      }
+      if (checkpoint && !isList(checkpoint.globalSeed, 4, word => isCount(word) && word < UINT32)) {
+        throw new Error("The run file contains an invalid seed.");
+      }
+      const simulation = new Simulation({
+        setup: {...setup, founders: 0, initialFood: 0}, params, seed: checkpoint?.globalSeed, entropy,
+      });
+      if (!isList(data.cells, simulation.cells.length, (cell, i) =>
+        cell?.q === simulation.cells[i].q && cell.r === simulation.cells[i].r && inRange(cell.food))) {
+        throw new Error("The saved hexes do not match the dish.");
+      }
+      data.cells.forEach(({food}, i) => { simulation.cells[i].food = food; });
+      Object.assign(simulation, {
+        setup, minMass: data.minimumMass, tick: data.tick, initialParams, parameterChanges, geneSwitchChanges,
+        history: data.history, peakPopulation: last.peakPopulation,
+        appliedGeneSwitches: {...setup.startingGeneSwitches, ...savedGeneSwitches(data.appliedGeneSwitches)},
+      });
+      simulation.queueParameters(checkpoint?.pendingParameters ?? {});
+      simulation.queueGeneSwitches(checkpoint?.pendingGeneSwitches ?? {});
+      for (const key of Object.keys(simulation.totals)) simulation.totals[key] = last.totals[key];
+      for (const key of Object.keys(simulation.stats)) simulation.stats[key] = last[key];
+      simulation.entities = restoreEntities(data.entities, simulation);
+
+      // Earlier results files identify every founder and birth but contain no individual lifespans.
+      const nextId = checkpoint?.nextId ?? setup.founders + last.totals.births + 1;
+      if (!isCount(nextId) || nextId < 1 || simulation.entities.some(entity => entity.id >= nextId)) {
+        throw new Error("The saved entity numbering is invalid.");
+      }
+      simulation.nextId = nextId;
+      if (checkpoint) {
+        const {recentLifespans, lifespanSum, nextLifespanIndex} = checkpoint;
+        if (!Array.isArray(recentLifespans) || recentLifespans.length > LIFESPAN_WINDOW
+          || recentLifespans.some(age => !isCount(age) || age > data.tick)
+          || !inRange(lifespanSum) || !isCount(nextLifespanIndex)
+          || nextLifespanIndex >= LIFESPAN_WINDOW
+          || recentLifespans.length < LIFESPAN_WINDOW && nextLifespanIndex !== recentLifespans.length) {
+          throw new Error("The run file contains invalid lifespan data.");
+        }
+        Object.assign(simulation, {recentLifespans, lifespanSum, nextLifespanIndex});
+      }
+      return simulation;
     }
 
     makeFounders() {
@@ -336,6 +569,17 @@ const Petri = (() => {
 
     enabledActivities() {
       return ACTIVITY_ENABLED_KEYS.map(key => this.params[key]);
+    }
+
+    // Edits made between ticks are part of a checkpoint until the next step.
+    queueParameters(changes) {
+      const values = savedParameters(changes);
+      if (Object.keys(values).length) this.pendingParameters = {...this.pendingParameters, ...values};
+    }
+
+    queueGeneSwitches(changes) {
+      const values = savedGeneSwitches(changes);
+      if (Object.keys(values).length) this.pendingGeneSwitches = {...this.pendingGeneSwitches, ...values};
     }
 
     applyParameters(changes) {
@@ -381,6 +625,14 @@ const Petri = (() => {
     }
 
     step(geneSwitchResets) {
+      if (this.pendingParameters) {
+        this.applyParameters(this.pendingParameters);
+        this.pendingParameters = null;
+      }
+      if (this.pendingGeneSwitches) {
+        geneSwitchResets = {...this.pendingGeneSwitches, ...geneSwitchResets};
+        this.pendingGeneSwitches = null;
+      }
       this.tick++;
       this.entropy(this.tickSalt);
       this.random.reseed(this.globalSeed, this.tickSalt);
@@ -431,6 +683,10 @@ const Petri = (() => {
 
       // 5. Decisions use the same pre-execution state within each entity.
       const anyEnabled = enabled.some(Boolean);
+      let decisionCount = 0;
+      const meanDecisionInputs = {mass: 0, energy: 0, waste: 0};
+      let energyScale = 0;
+      let energySquaredDeviations = 0;
       const probabilitySums = new Float64Array(ACTIVITIES.length);
       for (const entity of this.entities) {
         entity.plan.length = 0;
@@ -438,6 +694,20 @@ const Petri = (() => {
           entity.lastDecisionProbabilities = null;
           continue;
         }
+        decisionCount++;
+        const share = 1 / decisionCount;
+        // Scale the running sum of squared deviations to keep large energies finite.
+        const energy = entity.energy;
+        if (energy > energyScale) {
+          energySquaredDeviations *= (energyScale / energy) ** 2;
+          energyScale = energy;
+        }
+        const energyDelta = energy - meanDecisionInputs.energy;
+        const scaledDelta = energyDelta / (energyScale || 1);
+        energySquaredDeviations += scaledDelta ** 2 * (1 - share);
+        meanDecisionInputs.mass += (entity.mass - meanDecisionInputs.mass) * share;
+        meanDecisionInputs.energy += energyDelta * share;
+        meanDecisionInputs.waste += (entity.waste - meanDecisionInputs.waste) * share;
         const probabilities = entity.lastDecisionProbabilities ??= new Array(ACTIVITIES.length);
         for (let activity = 0; activity < ACTIVITIES.length; activity++) {
           if (!enabled[activity]) {
@@ -446,7 +716,7 @@ const Petri = (() => {
           }
           const logit = dotProduct(entity, activity * COEFFICIENTS.length);
           const rareOdds = Math.exp(-Math.abs(logit));
-          const probability = (logit < 0 ? rareOdds : 1) / (1 + rareOdds);
+          const probability = sigmoid(logit, rareOdds);
           probabilities[activity] = probability;
           probabilitySums[activity] += probability;
           if (!chooseActivity(logit, this.random, rareOdds)) continue;
@@ -455,9 +725,10 @@ const Petri = (() => {
         }
         entity.plan.sort((a, b) => a.logit === b.logit ? a.tie - b.tie : (a.logit > b.logit ? -1 : 1));
       }
-      const decisionCount = anyEnabled ? this.entities.length : 0;
       this.stats.decisionCount = decisionCount;
       if (decisionCount) {
+        this.stats.meanDecisionInputs = meanDecisionInputs;
+        this.stats.decisionEnergySD = energyScale * Math.sqrt(energySquaredDeviations / decisionCount);
         this.stats.meanDecisionProbabilities = Array.from(probabilitySums, (sum, activity) =>
           enabled[activity] ? sum / decisionCount : null);
       }
@@ -487,13 +758,20 @@ const Petri = (() => {
       return this.record(enabled);
     }
 
+    failAttempt(entity, referenceEnergy) {
+      const fraction = this.params.failedAttemptFraction;
+      if (fraction > 0) entity.energy -= Math.min(entity.energy, fraction * referenceEnergy);
+      return false;
+    }
+
     execute(activity, entity, newborns) {
       const params = this.params;
       switch (activity) {
         case 0: {
+          const removable = Math.min(entity.waste, entity.surface * params.excretionRate);
           const affordable = params.excretionCost === 0 ? Infinity : entity.energy / params.excretionCost;
-          const amount = Math.min(entity.waste, affordable, entity.surface * params.excretionRate);
-          if (amount <= 0) return false;
+          const amount = Math.min(removable, affordable);
+          if (amount <= 0) return this.failAttempt(entity, removable * params.excretionCost);
           entity.energy = Math.max(0, entity.energy - amount * params.excretionCost);
           entity.waste -= amount;
           return true;
@@ -502,8 +780,8 @@ const Petri = (() => {
           const added = entity.mass * params.growthFraction;
           const mass = entity.mass + added;
           const cost = added * params.foodPerMass * params.energyPerFood * (1 + params.growthSpread);
-          if (mass === entity.mass || entity.energy < cost) return false;
-          if (!Number.isFinite(mass)) throw new RangeError("A simulated mass exceeded the browser’s numerical range.");
+          if (mass === entity.mass || entity.energy < cost) return this.failAttempt(entity, cost);
+          if (!Number.isFinite(mass)) throw new RangeError("A simulated mass exceeded the numerical range.");
           entity.energy -= cost;
           entity.mass = mass;
           entity.surface = circumference(entity.mass);
@@ -516,7 +794,9 @@ const Petri = (() => {
           const energy = entity.energy + gainedEnergy;
           const waste = entity.waste + gainedEnergy / params.energyWasteRatio;
           if (mass === entity.mass || mass < this.minMass
-            || !fits(energy, mass * params.energyCapacity) || !fits(waste, mass * params.wasteCapacity)) return false;
+            || !fits(energy, mass * params.energyCapacity) || !fits(waste, mass * params.wasteCapacity)) {
+            return this.failAttempt(entity, gainedEnergy);
+          }
           entity.mass = mass;
           entity.surface = circumference(mass);
           entity.energy = energy;
@@ -526,13 +806,14 @@ const Petri = (() => {
         case 3: {
           const cost = entity.mass * params.movementCost;
           const neighbors = this.cells[entity.cell].neighbors;
-          if (!neighbors.length || entity.energy < cost) return false;
+          if (!neighbors.length || entity.energy < cost) return this.failAttempt(entity, cost);
           entity.cell = neighbors[Math.floor(this.random.unit() * neighbors.length)];
           entity.energy -= cost;
           return true;
         }
         case 4:
-          return this.reproduce(entity, newborns);
+          if (this.reproduce(entity, newborns)) return true;
+          return this.failAttempt(entity, params.reproductionCost);
         default:
           throw new RangeError("Unknown activity");
       }
@@ -689,7 +970,7 @@ const Petri = (() => {
       const energyCapacity = mass * this.params.energyCapacity;
       const wasteCapacity = mass * this.params.wasteCapacity;
       if (![mass, energy, waste, food, energyCapacity, wasteCapacity].every(Number.isFinite)) {
-        throw new RangeError("A simulated stock exceeded the browser’s numerical range.");
+        throw new RangeError("A simulated stock exceeded the numerical range.");
       }
 
       const lifespanSamples = this.recentLifespans.length;
@@ -733,8 +1014,8 @@ const Petri = (() => {
       const enabled = this.enabledActivities();
       return {
         model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
-        setup: this.setup, initialParameters: this.initialParams, appliedParameters: this.params,
-        appliedGeneSwitches: this.appliedGeneSwitches, geneSwitchChanges: this.geneSwitchChanges,
+        setup: this.setup, initialParameters: this.initialParams, appliedParameters: {...this.params},
+        appliedGeneSwitches: {...this.appliedGeneSwitches}, geneSwitchChanges: this.geneSwitchChanges,
         parameterChanges: this.parameterChanges, activityOrder: ACTIVITIES, coefficientOrder: COEFFICIENTS,
         connectionInputOrder: COEFFICIENTS.slice(1),
         genetics: {
@@ -753,10 +1034,17 @@ const Petri = (() => {
           effectiveActiveConnections: "Stored ON inputs in enabled activities at the end of the tick",
           maintainedConnections: "Effective ON inputs of entities that paid persistence, before decisions and reproduction",
           connectionMaintenancePaid: "Total energy paid for effective ON inputs at the persistence stage of this tick",
+          meanDecisionInputs: "Mean mass, energy and waste of the entities making decisions, after persistence and before optional activities",
+          decisionEnergySD: "Population standard deviation of energy among those same entities at the decision stage",
         },
         coefficientStatistics: ["mean", "populationStandardDeviation", "minimum", "maximum"],
         history: this.history, entities: this.entities.map(entity => entityState(entity, enabled, this.tick)),
         cells: this.cells.map(({q, r, food}) => ({q, r, food})),
+        checkpoint: {
+          format: 1, globalSeed: Array.from(this.globalSeed), nextId: this.nextId,
+          pendingParameters: {...this.pendingParameters}, pendingGeneSwitches: {...this.pendingGeneSwitches},
+          recentLifespans: this.recentLifespans.slice(), lifespanSum: this.lifespanSum, nextLifespanIndex: this.nextLifespanIndex,
+        },
       };
     }
   }
@@ -764,7 +1052,8 @@ const Petri = (() => {
   return {
     VERSION,
     Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
-    Random, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
+    SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, savedParameters, savedGeneSwitches, savedPlayback,
+    Random, feedCell, foodIncome, mutateValue, sigmoid, dotProduct, chooseActivity, circumference,
   };
 })();
 

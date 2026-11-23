@@ -1,9 +1,11 @@
 "use strict";
 
-const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK} = CONFIG;
-const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
-const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
-const CHART_WINDOW = 5000;
+const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS,
+  DEFAULT_PAUSE_TICK, SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, sigmoid, dotProduct} = Petri;
+const HISTORY_BUFFER_SIZE = CHART_WINDOW + SUCCESS_RATE_AVERAGE_TICKS - 1;
+const ACTIVITY_DISPLAY_ORDER = [...new Set([
+  "Reproduction", "Movement", "Growth", "Shrinking", "Excretion", ...ACTIVITIES,
+])].map(name => ACTIVITIES.indexOf(name)).filter(index => index >= 0);
 const DEFAULT_MODEL_PARAMS = Object.fromEntries(
   Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key)),
 );
@@ -11,6 +13,7 @@ const MODEL_PRESETS = {
   default: DEFAULT_MODEL_PARAMS,
   "scarce-food": {...DEFAULT_MODEL_PARAMS, foodMean: 1.5, foodSD: 8},
 };
+const STANDARD_DEVIATION_FILL = "#b9ce8239";
 const $ = id => document.getElementById(id);
 const all = selector => Array.from(document.querySelectorAll(selector));
 const write = (id, value) => { $(id).textContent = value; };
@@ -22,6 +25,7 @@ const exact = value => value === 0 ? "0" : value.toPrecision(3);
 const controls = new Map();
 const switchRows = [];
 const histogramBins = [];
+const sigmoidButtons = new Map();
 
 const GROUPS = [
   ["Environment", true, [
@@ -38,17 +42,18 @@ const GROUPS = [
     ["wasteCapacity", "Waste capacity", "W/M", 0, 10, 0.1],
     ["persistence", "Persistence cost", "E/M", 0, 1, 0.005],
     ["connectionCost", "Connection maintenance", "E/ON/tick", 0, 0.1, 0.001],
-    ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
-    ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
+    ["failedAttemptFraction", "Failed-attempt fraction", "%", 0, 100, 0.1, {scale: 100, max: 100}],
   ]],
-  ["Growth, movement & division", false, [
-    ["growthFraction", "Mass growth", "%", 0, 100, 1, {scale: 100, max: 100}],
-    ["shrinkFraction", "Mass shrinking", "%", 0, 100, 1, {scale: 100, max: 100}],
-    ["growthSpread", "Growth spread", "%", 0, 100, 1, {scale: 100}],
-    ["movementCost", "Movement cost", "E/M", 0, 0.5, 0.005],
+  ["Activity settings", false, [
     ["reproductionCost", "Reproduction cost", "E", 0, 12, 0.1],
     ["divisionLoss", "Division mass loss", "%", 0, 100, 1, {scale: 100, max: 100}],
     ["offspringShare", "Offspring share", "%", 1, 99, 1, {scale: 100, min: 0.01, max: 99.99}],
+    ["movementCost", "Movement cost", "E/M", 0, 0.5, 0.005],
+    ["growthFraction", "Mass growth", "%", 0, 100, 1, {scale: 100, max: 100}],
+    ["growthSpread", "Growth spread", "%", 0, 100, 1, {scale: 100}],
+    ["shrinkFraction", "Mass shrinking", "%", 0, 100, 1, {scale: 100, max: 100}],
+    ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
+    ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
   ]],
   ["Inheritance", false, [
     ["mutationRate", "Numerical copying error (μw)", "%", 0, 20, 0.1, {scale: 100, max: 100}],
@@ -69,7 +74,7 @@ const SETUP_KNOBS = [
   ["initialFood", "Starting food", "F/hex", 0, 20, 0.25],
   ["biasLow", "Bias lower bound", "", -12, 12, 0.1, {min: -1000000}],
   ["biasHigh", "Bias upper bound", "", -12, 12, 0.1, {min: -1000000}],
-  ["weightRange", "Founder & activation range ±", "", 0, 0.1, 0.001],
+  ["weightRange", "Founder & activation range ±", "", 0, 10, 0.001],
 ];
 
 let worker;
@@ -77,6 +82,7 @@ let runId = 0;
 let ready = false;
 let running = false;
 let commandPending = false;
+let fileBusy = false;
 let setupLocked = false;
 let failed = false;
 let checkpoint = false;
@@ -87,7 +93,7 @@ let snapshot = null;
 let latestSummary = null;
 let selectedBin = null;
 let geneRevision = 0;
-let history = [];
+let historyBuffer = [];
 let lastFrame = 0;
 let watch = {cell: 45, entityId: null, token: 0};
 let hoverCell = -1;
@@ -95,7 +101,8 @@ let hexPositions = [];
 let hexSize = 0;
 let inspector = null;
 let inspectedAt = 0;
-let chart = "genetics";
+let chart = "entities";
+let sigmoidActivity = ACTIVITY_DISPLAY_ORDER[0];
 let occupantOptions = "";
 let lastLegend = "";
 let lastExcluded = null;
@@ -175,7 +182,7 @@ function hexCount(radius) {
   return 1 + 3 * radius * (radius + 1);
 }
 
-function normalizeSetup() {
+function normalizeSetup({keepStores = false} = {}) {
   const founders = controls.get("founders");
   const max = hexCount(setup.radius);
   founders.number.max = max;
@@ -187,8 +194,10 @@ function normalizeSetup() {
   waste.number.max = Math.min(1000000, setup.initialMass * params.wasteCapacity);
   energy.range.max = Math.max(1, Math.min(80, Number(energy.number.max)));
   waste.range.max = Math.max(1, Math.min(40, Number(waste.number.max)));
-  setup.initialEnergy = Math.min(setup.initialEnergy, Number(energy.number.max));
-  setup.initialWaste = Math.min(setup.initialWaste, Number(waste.number.max));
+  if (!keepStores) {
+    setup.initialEnergy = Math.min(setup.initialEnergy, Number(energy.number.max));
+    setup.initialWaste = Math.min(setup.initialWaste, Number(waste.number.max));
+  }
   founders.sync(setup.founders);
   energy.sync(setup.initialEnergy);
   waste.sync(setup.initialWaste);
@@ -232,6 +241,10 @@ function setLiveParameters(values) {
   } else {
     post("tune", {values: changes});
   }
+  syncPreset();
+}
+
+function syncPreset() {
   const selected = Object.keys(MODEL_PRESETS).find(name =>
     Object.entries(MODEL_PRESETS[name]).every(([key, value]) => params[key] === value)
   );
@@ -313,7 +326,8 @@ function mountGeneNode(node, list, ancestors = []) {
 }
 
 function mountControls() {
-  mountGeneNode(GENE_TREE, $("gene-tree"));
+  const geneTree = {...GENE_TREE, children: ACTIVITY_DISPLAY_ORDER.map(index => GENE_TREE.children[index])};
+  mountGeneNode(geneTree, $("gene-tree"));
   syncGeneTree();
   mountHistogram();
   for (const [name, open, knobs] of GROUPS) {
@@ -342,26 +356,30 @@ function mountControls() {
   $("setup-controls").append(min);
   normalizeSetup();
 
-  for (let i = 0; i < ACTIVITIES.length; i++) {
+  for (const i of ACTIVITY_DISPLAY_ORDER) {
     const el = document.createElement("div");
     el.className = "activity-row";
-    el.innerHTML = '<span class="value"></span><span class="value"></span><span class="value"></span><span class="value success"></span>';
-    const [probability, selected, attempted, done] = el.children;
+    el.innerHTML = '<span class="value"></span><span class="value"></span><span class="value"></span>'
+      + '<span class="value success"></span><span class="value success"></span>';
+    const [probability, selected, attempted, done, rate] = el.children;
     el.prepend(makeKnob([ACTIVITY_ENABLED_KEYS[i], ACTIVITIES[i], "toggle"], params, "live"));
     probability.id = "activity-probability-" + i;
     selected.id = "activity-selected-" + i;
     attempted.id = "activity-attempted-" + i;
     done.id = "activity-done-" + i;
+    rate.id = "activity-success-rate-" + i;
     $("activity-list").append(el);
   }
-  const historySelect = $("gene-select");
-  for (const name of new Set(["Reproduction", "Movement", ...ACTIVITIES])) {
-    const activity = ACTIVITIES.indexOf(name);
+  const historySelect = $("entity-metric");
+  for (const activity of ACTIVITY_DISPLAY_ORDER) {
+    const name = ACTIVITIES[activity];
     const group = document.createElement("optgroup");
     group.label = name;
+    const successRate = new Option(name + " · Success rate", "success-rate-" + activity);
+    successRate.dataset.successRateActivity = String(activity);
     const probability = new Option(name + " · Mean probability", "probability-" + activity);
     probability.dataset.probabilityActivity = String(activity);
-    group.append(probability);
+    group.append(successRate, probability);
     for (let j = 0; j < COEFFICIENTS.length; j++) {
       group.append(new Option(name + " · " + COEFFICIENTS[j], activity * COEFFICIENTS.length + j));
     }
@@ -374,11 +392,11 @@ function mountControls() {
   const reproduction = ACTIVITIES.indexOf("Reproduction");
   const bias = COEFFICIENTS.indexOf("Bias");
   historySelect.value = String(reproduction * COEFFICIENTS.length + bias);
-  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability"], "Population averages", 1);
+  mountActivityTable("population-genes-table", [...COEFFICIENTS, "Mean probability", "Success rate"], "Population averages", 1, true);
   mountActivityTable("entity-genes-table", ["Last probability", "Bias", "M", "E", "W"], "Decision coefficients", 2);
 }
 
-function mountActivityTable(id, columns, name, firstWeightColumn) {
+function mountActivityTable(id, columns, name, firstWeightColumn, selectable = false) {
   const table = document.createElement("table");
   table.className = "coefficient-table";
   table.setAttribute("aria-label", name);
@@ -390,11 +408,24 @@ function mountActivityTable(id, columns, name, firstWeightColumn) {
     head.append(th);
   }
   const body = table.createTBody();
-  for (let i = 0; i < ACTIVITIES.length; i++) {
+  for (const i of ACTIVITY_DISPLAY_ORDER) {
     const row = body.insertRow();
     const th = document.createElement("th");
     th.scope = "row";
-    th.textContent = ACTIVITIES[i];
+    if (selectable) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = ACTIVITIES[i];
+      button.setAttribute("aria-controls", "activity-sigmoid");
+      button.setAttribute("aria-pressed", String(i === sigmoidActivity));
+      row.classList.add("sigmoid-row");
+      row.classList.toggle("selected", i === sigmoidActivity);
+      row.addEventListener("click", () => selectSigmoidActivity(i));
+      sigmoidButtons.set(i, button);
+      th.append(button);
+    } else {
+      th.textContent = ACTIVITIES[i];
+    }
     row.append(th);
     for (let j = 0; j < columns.length; j++) {
       const cell = row.insertCell();
@@ -430,30 +461,50 @@ function formatProbability(value) {
   return percent.format(value);
 }
 
+function activitySuccessRate(stats) {
+  return stats?.attempted > 0 && Number.isFinite(stats.succeeded) ? stats.succeeded / stats.attempted : null;
+}
+
+function activitySuccessRates(activities) {
+  return ACTIVITIES.map((_, i) => activitySuccessRate(activities?.[i]));
+}
+
 function chooseCenter() {
   watch = {cell: (hexCount(setup.radius) - 1) / 2, entityId: null, token: watch.token + 1};
   inspector = null;
   hoverCell = -1;
 }
 
-function newRun() {
-  runId++;
+function resetRunView() {
   lastFrame = 0;
-  ready = false;
-  running = false;
-  failed = false;
-  checkpoint = false;
   commandPending = false;
   snapshot = null;
   latestSummary = null;
   selectedBin = null;
   geneRevision = 0;
   $("gene-reset-status").hidden = true;
-  history = [];
+  historyBuffer = [];
+}
+
+function newRun() {
+  runId++;
+  resetRunView();
+  setFileStatus("");
   normalizeSetup();
   chooseCenter();
   renderStatus("loading", 0);
   post("reset", {setup, params, watch, speed: speedValue(), refresh: refreshValue(), pauseAtTick});
+}
+
+function syncFileButtons() {
+  $("import").disabled = !ready || fileBusy;
+  $("export").disabled = !ready || fileBusy || failed;
+  $("restart").disabled = !ready || fileBusy;
+}
+
+function setFileStatus(message, error = false) {
+  write("file-status", message);
+  $("file-status").classList.toggle("error", error);
 }
 
 function renderStatus(reason, tick) {
@@ -474,8 +525,7 @@ function renderStatus(reason, tick) {
   tickRate.textContent = running ? " (… ticks/s)" : "";
   $("play").disabled = !ready || failed || commandPending;
   $("step").disabled = !ready || running || failed || commandPending;
-  $("restart").disabled = !ready;
-  $("export").disabled = !ready || failed;
+  syncFileButtons();
   $("play").lastElementChild.textContent = running ? "Pause" : tick > 0 ? "Resume" : "Start";
   $("play").firstElementChild.className = "icon " + (running ? "icon-pause" : "icon-play");
   $("setup-fields").disabled = setupLocked;
@@ -515,6 +565,44 @@ function presentFrame(data) {
   renderHistory();
 }
 
+function formatExcludedActivities(excludedActivities) {
+  return ACTIVITY_DISPLAY_ORDER.map(index => ACTIVITIES[index])
+    .filter(name => excludedActivities.includes(name)).join(", ");
+}
+
+function appendExclusion({tick, excludedActivities}) {
+  const excluded = formatExcludedActivities(excludedActivities);
+  if (lastExcluded === excluded) return;
+  const item = document.createElement("li");
+  item.textContent = "Tick " + int.format(tick) + " · " + (excluded ? excluded + " excluded" : "All activities enabled");
+  $("exclusion-history").prepend(item);
+  lastExcluded = excluded;
+}
+
+function showImportedRun(data) {
+  runId = data.nextRunId;
+  resetRunView();
+  setup = data.setup;
+  params = data.params;
+  watch = data.watch;
+  inspector = null;
+  hoverCell = -1;
+  for (const [key] of SETUP_KNOBS) controls.get(key).sync(setup[key]);
+  for (const [key, value] of Object.entries(params)) controls.get(key).sync(value);
+  normalizeSetup({keepStores: data.tick > 0});
+  syncGeneTree();
+  syncPreset();
+  $("speed").value = String(SPEEDS.indexOf(data.playback.speed));
+  $("refresh").value = String(REFRESHES.indexOf(data.playback.refresh));
+  pauseAtTick = data.playback.pauseAtTick;
+  $("pause-at-tick").value = String(pauseAtTick);
+  updateTiming();
+  fileBusy = false;
+  renderStatus("loading", data.tick);
+  setFileStatus("Loaded tick " + int.format(data.tick) + ". " + (data.tick ? "Resume to continue." : "Press Start to begin.")
+    + (data.legacy ? " The lifespan average will rebuild as entities die." : ""));
+}
+
 function receive({data}) {
   if (data.runId !== runId) return;
   switch (data.type) {
@@ -530,28 +618,28 @@ function receive({data}) {
       break;
     case "frame":
       if (data.replaceHistory) {
-        history = [];
+        historyBuffer = [];
         lastExcluded = null;
         $("exclusion-history").replaceChildren();
       }
+      if (data.priorActivityStats) {
+        // A new chart window starts with off-screen activity counts for its first averages.
+        historyBuffer = data.priorActivityStats.map(activities => ({activitySuccessRates: activitySuccessRates(activities)}));
+      }
+      for (const record of data.earlierExclusions) appendExclusion(record);
       for (const record of data.records) {
-        history.push({
+        historyBuffer.push({
           tick: record.tick, population: record.population, food: record.food, energy: record.energy,
           waste: record.waste, genes: record.genes.map(([mean, sd]) => [mean, sd]),
           meanDecisionProbabilities: record.meanDecisionProbabilities,
+          activitySuccessRates: activitySuccessRates(record.activities),
           connectionOnFractions: record.connectionOnFractions,
           distinctPatterns: record.distinctPatterns, effectivePatterns: record.effectivePatterns,
           dominantPatternShare: record.dominantPatternShare, geneSwitchReset: record.geneSwitchReset,
         });
-        const excluded = record.excludedActivities.join(", ");
-        if (lastExcluded !== excluded) {
-          const item = document.createElement("li");
-          item.textContent = "Tick " + int.format(record.tick) + " · " + (excluded ? excluded + " excluded" : "All activities enabled");
-          $("exclusion-history").prepend(item);
-          lastExcluded = excluded;
-        }
+        appendExclusion(record);
       }
-      if (history.length > CHART_WINDOW) history.splice(0, history.length - CHART_WINDOW);
+      if (historyBuffer.length > HISTORY_BUFFER_SIZE) historyBuffer.splice(0, historyBuffer.length - HISTORY_BUFFER_SIZE);
       if (data.debug && document.visibilityState === "visible") {
         requestAnimationFrame(() => {
           presentFrame(data);
@@ -579,8 +667,22 @@ function receive({data}) {
       renderInspector();
       break;
     case "export":
-      download(data.blob, "petri-dish-tick-" + data.tick + ".json");
-      $("export").disabled = false;
+      fileBusy = false;
+      syncFileButtons();
+      try {
+        download(data.blob, "petri-dish-tick-" + data.tick + ".json" + (data.gzip ? ".gz" : ""));
+        setFileStatus("Download started for tick " + int.format(data.tick) + ".");
+      } catch (error) {
+        setFileStatus("Could not download the run. " + error.message, true);
+      }
+      break;
+    case "imported":
+      showImportedRun(data);
+      break;
+    case "file-error":
+      fileBusy = false;
+      syncFileButtons();
+      setFileStatus((data.operation === "export" ? "Export failed. " : "Import failed. ") + data.message, true);
       break;
     case "failure":
       $("run-notice").textContent = data.message + " Restart to begin a new run.";
@@ -596,7 +698,7 @@ function download(blob, filename) {
   document.body.append(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function renderGauges(summary, minimum) {
@@ -627,14 +729,15 @@ function renderGauges(summary, minimum) {
   write("mutations", int.format(summary.totals.mutations));
   write("switch-flips", int.format(summary.totals.switchFlips));
   write("excluded-status", summary.excludedActivities.length
-    ? "Excluded · " + summary.excludedActivities.join(", ") : "All activities enabled");
-  for (let i = 0; i < ACTIVITIES.length; i++) {
+    ? "Excluded · " + formatExcludedActivities(summary.excludedActivities) : "All activities enabled");
+  for (const i of ACTIVITY_DISPLAY_ORDER) {
     const stats = summary.activities[i];
     const enabled = !summary.excludedActivities.includes(ACTIVITIES[i]);
     write("activity-probability-" + i, formatProbability(summary.meanDecisionProbabilities[i]));
     write("activity-selected-" + i, enabled ? int.format(stats.selected) : "—");
     write("activity-attempted-" + i, enabled ? int.format(stats.attempted) : "—");
     write("activity-done-" + i, enabled ? int.format(stats.succeeded) : "—");
+    write("activity-success-rate-" + i, formatOnFraction(activitySuccessRate(stats)));
   }
 }
 
@@ -647,7 +750,7 @@ function renderPopulationGenetics(summary) {
   write("connection-upkeep", axisValue(summary.connectionMaintenancePaid) + " E");
   write("maintained-connections", int.format(summary.maintainedConnections)
     + (summary.maintainedConnections === 1 ? " connection" : " connections"));
-  for (let i = 0; i < ACTIVITIES.length; i++) {
+  for (const i of ACTIVITY_DISPLAY_ORDER) {
     const bias = summary.genes[i * COEFFICIENTS.length][0];
     write("population-genes-table-" + i + "-0", bias === null ? "—" : exact(bias));
     for (let j = 1; j < COEFFICIENTS.length; j++) {
@@ -658,12 +761,176 @@ function renderPopulationGenetics(summary) {
     }
     write("population-genes-table-" + i + "-" + COEFFICIENTS.length,
       formatProbability(summary.meanDecisionProbabilities[i]));
+    write("population-genes-table-" + i + "-" + (COEFFICIENTS.length + 1),
+      formatOnFraction(activitySuccessRate(summary.activities[i])));
   }
   write("distinct-patterns", int.format(summary.distinctPatterns));
   write("effective-patterns", summary.effectivePatterns === null ? "—" : dec.format(summary.effectivePatterns));
   write("dominant-share", formatOnFraction(summary.dominantPatternShare));
   write("leading-pattern", describeLeadingPattern(summary));
   renderHistogram(summary);
+  renderSigmoid();
+}
+
+function selectSigmoidActivity(activity) {
+  sigmoidActivity = activity;
+  for (const [index, button] of sigmoidButtons) {
+    const selected = index === activity;
+    button.setAttribute("aria-pressed", String(selected));
+    button.closest("tr").classList.toggle("selected", selected);
+  }
+  renderSigmoid();
+}
+
+function sigmoidProjection(summary, activity, input) {
+  if (!summary.population) return null;
+  const offset = activity * COEFFICIENTS.length;
+  const genes = summary.genes.slice(offset, offset + COEFFICIENTS.length).map(([mean]) => mean);
+  if (!Number.isFinite(genes[0])) return null;
+  const inputs = summary.meanDecisionInputs;
+  const average = inputs ? {...inputs, genes} : null;
+  const probability = average ? sigmoid(dotProduct(average, 0)) : null;
+  if (input === "weighted") {
+    const reference = average ? dotProduct({...average, genes: [0, ...genes.slice(1)]}, 0) : null;
+    const midpoint = -genes[0];
+    const padding = Math.max(6, Math.abs(midpoint) * 16 * Number.EPSILON);
+    const mean = Number.isFinite(reference) ? reference : 0;
+    const min = Math.max(-Number.MAX_VALUE, Math.min(-6, midpoint - padding, mean));
+    const max = Math.min(Number.MAX_VALUE, Math.max(6, midpoint + padding, mean));
+    return {min, max, reference, probability, evaluate: value => sigmoid(genes[0] + value)};
+  }
+  if (!average) return null;
+  const deviation = summary.decisionEnergySD;
+  const spread = input === "energy" && Number.isFinite(deviation) && deviation >= 0 ? {
+    low: Math.max(0, average.energy - deviation),
+    high: Math.min(Number.MAX_VALUE, average.energy + deviation),
+  } : null;
+  const limit = input === "mass" ? average.mass * 2
+    : average.mass * (summary[input + "Capacity"] / summary.mass);
+  const max = Math.max(average[input], Math.min(Number.MAX_VALUE, limit), spread?.high ?? 0) || 1;
+  return {
+    min: 0, max, reference: average[input], probability, spread,
+    evaluate: value => sigmoid(dotProduct({...average, [input]: value}, 0)),
+  };
+}
+
+function renderSigmoid() {
+  if (chart !== "entities" || !latestSummary) return;
+  const canvas = $("sigmoid-curve");
+  const context = canvasContext(canvas);
+  if (!context) return;
+  const select = $("sigmoid-input");
+  const input = select.value;
+  const axis = input === "weighted" ? "Weighted input before bias" : select.selectedOptions[0].textContent;
+  const title = ACTIVITIES[sigmoidActivity] + " sigmoid";
+  const plot = sigmoidProjection(latestSummary, sigmoidActivity, input);
+  const emptyMessage = latestSummary.population
+    ? "No decision inputs recorded for this tick." : "No living entities to average.";
+  write("sigmoid-title", title);
+  $("sigmoid-empty").hidden = !!plot;
+  $("sigmoid-caption").hidden = !plot;
+  $("sigmoid-detail").hidden = !plot;
+  if (!plot) {
+    write("sigmoid-empty", emptyMessage);
+    canvas.setAttribute("aria-label", title + ". " + emptyMessage);
+    return;
+  }
+  const hasMarker = Number.isFinite(plot.reference) && Number.isFinite(plot.probability);
+  const estimate = hasMarker ? formatProbability(plot.probability) : "";
+  const pointLabel = input === "weighted" ? "At mean decision inputs"
+    : "At mean " + axis.toLowerCase() + " " + axisValue(plot.reference);
+  const {spread} = plot;
+  let spreadLabel = "";
+  $("sigmoid-spread").hidden = !spread;
+  if (spread) {
+    const low = axisValue(spread.low);
+    const high = axisValue(spread.high);
+    write("sigmoid-spread-range", low === high ? low : low + "–" + high);
+    spreadLabel = " Energy band " + low + " to " + high + " (±1 standard deviation after persistence).";
+  }
+  write("sigmoid-axis-label", axis);
+  $("sigmoid-estimate").hidden = !hasMarker;
+  if (hasMarker) write("sigmoid-point-label", pointLabel);
+  write("sigmoid-probability", estimate);
+  const detail = !latestSummary.meanDecisionInputs ? emptyMessage
+    : input === "weighted" ? "The dot uses mean inputs after persistence."
+    : "Other inputs are held at their means after persistence.";
+  const excluded = latestSummary.excludedActivities.includes(ACTIVITIES[sigmoidActivity]);
+  write("sigmoid-detail", detail + (excluded ? " This activity is excluded." : ""));
+  canvas.setAttribute("aria-label", title + ". Decision probability by " + axis.toLowerCase()
+    + (hasMarker ? ". " + pointLabel + " after persistence, " + estimate + "." : ". " + detail) + spreadLabel);
+  drawSigmoid(context, plot);
+}
+
+function drawSigmoid({ctx, width, height}, {min, max, reference, probability, evaluate, spread}) {
+  const left = 46;
+  const right = width - 9;
+  const top = 22;
+  const bottom = height - 22;
+  const y = value => bottom - value * (bottom - top);
+  const at = fraction => min * (1 - fraction) + max * fraction;
+  const scale = Math.max(1, Math.abs(min), Math.abs(max));
+  const x = value => left + (right - left) * (value / scale - min / scale) / (max / scale - min / scale);
+  if (spread && spread.low < spread.high) {
+    const lower = x(spread.low);
+    ctx.fillStyle = STANDARD_DEVIATION_FILL;
+    ctx.fillRect(lower, top, x(spread.high) - lower, bottom - top);
+  }
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#aaa895";
+  ctx.textAlign = "left";
+  ctx.fillText("Decision probability", left, 6);
+  ctx.textAlign = "right";
+  ctx.strokeStyle = "#3a3e30";
+  ctx.lineWidth = 1;
+  for (const probability of [0, 0.25, 0.5, 0.75, 1]) {
+    const position = y(probability);
+    ctx.fillText(percent.format(probability), left - 6, position);
+    ctx.beginPath();
+    ctx.moveTo(left, position);
+    ctx.lineTo(right, position);
+    ctx.stroke();
+  }
+  for (const fraction of [0, 0.5, 1]) {
+    const label = at(fraction);
+    ctx.textAlign = fraction === 0 ? "left" : fraction === 1 ? "right" : "center";
+    ctx.fillText(Math.abs(label) >= 1e6 ? label.toExponential(1) : axisValue(label),
+      left + fraction * (right - left), height - 8);
+  }
+  ctx.beginPath();
+  let located = false;
+  for (let i = 0; i <= 160; i++) {
+    const fraction = i / 160;
+    const value = evaluate(at(fraction));
+    if (!Number.isFinite(value)) {
+      located = false;
+      continue;
+    }
+    const position = left + fraction * (right - left);
+    if (located) ctx.lineTo(position, y(value));
+    else ctx.moveTo(position, y(value));
+    located = true;
+  }
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#ccdfa4";
+  ctx.stroke();
+
+  if (!Number.isFinite(reference) || !Number.isFinite(probability)) return;
+  const pointX = x(reference);
+  const pointY = y(probability);
+  ctx.beginPath();
+  ctx.strokeStyle = "#d6a76c";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 3]);
+  ctx.moveTo(pointX, pointY);
+  ctx.lineTo(pointX, bottom);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(pointX, pointY, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#edb766";
+  ctx.fill();
 }
 
 function describeLeadingPattern({leadingPattern, leadingPatternCount}) {
@@ -673,7 +940,7 @@ function describeLeadingPattern({leadingPattern, leadingPatternCount}) {
   if (!leadingPattern.includes("1")) return "Most common pattern · All inputs OFF";
   const inputs = COEFFICIENTS.slice(1);
   const groups = [];
-  for (let i = 0; i < ACTIVITIES.length; i++) {
+  for (const i of ACTIVITY_DISPLAY_ORDER) {
     const on = inputs.filter((_, j) => leadingPattern[connectionIndex(i, j + 1)] === "1");
     if (on.length) groups.push(ACTIVITIES[i] + " (" + on.join(", ") + ")");
   }
@@ -888,7 +1155,7 @@ function renderInspector() {
   write("entity-connections", "Connections · " + selected.activeConnections + " ON · " + selected.effectiveActiveConnections + " effective");
   const probabilities = selected.lastDecisionProbabilities;
   write("entity-decision-tick", selected.lastDecisionTick === null ? "No decisions this tick" : "Tick " + int.format(selected.lastDecisionTick));
-  for (let i = 0; i < ACTIVITIES.length; i++) {
+  for (const i of ACTIVITY_DISPLAY_ORDER) {
     write("entity-genes-table-" + i + "-0", formatProbability(probabilities?.[i] ?? null));
     write("entity-genes-table-" + i + "-1", exact(selected.coefficients[i * COEFFICIENTS.length]));
     for (let j = 1; j < COEFFICIENTS.length; j++) {
@@ -931,15 +1198,36 @@ function axisValue(value) {
   return dec.format(value);
 }
 
+function movingSuccessRates(values) {
+  let sum = 0;
+  let count = 0;
+  return values.map((value, i) => {
+    const previous = values[i - SUCCESS_RATE_AVERAGE_TICKS];
+    if (Number.isFinite(previous)) {
+      sum -= previous;
+      count--;
+    }
+    if (count === 0) sum = 0;
+    if (Number.isFinite(value)) {
+      sum += value;
+      count++;
+    }
+    return count ? Math.max(0, Math.min(1, sum / count)) : null;
+  });
+}
+
 function renderHistory() {
   const context = canvasContext($("history"));
-  if (!context || history.length === 0) return;
-  const metric = $("gene-select").selectedOptions[0];
-  const probabilityActivity = metric.dataset.probabilityActivity;
-  const probabilityChart = chart === "genetics" && probabilityActivity !== undefined;
+  if (!context || historyBuffer.length === 0) return;
+  const history = historyBuffer.length > CHART_WINDOW ? historyBuffer.slice(-CHART_WINDOW) : historyBuffer;
+  const metric = $("entity-metric").selectedOptions[0];
+  const {probabilityActivity, successRateActivity} = metric.dataset;
+  const entityChart = chart === "entities";
+  const probabilityChart = entityChart && probabilityActivity !== undefined;
+  const successRateChart = entityChart && successRateActivity !== undefined;
   const gene = Number(metric.value);
-  const coefficientChart = chart === "genetics" && Number.isInteger(gene);
-  const dominanceChart = chart === "genetics" && metric.value === "dominance";
+  const coefficientChart = entityChart && Number.isInteger(gene);
+  const dominanceChart = entityChart && metric.value === "dominance";
   const coefficientIndex = gene % COEFFICIENTS.length;
   const inputChart = coefficientChart && coefficientIndex !== 0;
   $("connection-trend").hidden = !inputChart;
@@ -959,15 +1247,26 @@ function renderHistory() {
     ];
     legend = series;
     write("history-caption", "Dish-wide stocks by tick");
-  } else if (probabilityChart) {
-    const activity = Number(probabilityActivity);
+  } else if (successRateChart || probabilityChart) {
+    const activity = Number(successRateActivity ?? probabilityActivity);
+    const field = successRateChart ? "activitySuccessRates" : "meanDecisionProbabilities";
     series = [{
-      name: ACTIVITIES[activity] + " mean probability",
-      color: "#ccdfa4",
-      values: history.map(record => record.meanDecisionProbabilities[activity]),
+      name: ACTIVITIES[activity] + (successRateChart ? " success rate" : " mean probability"),
+      color: successRateChart ? "#ccdfa47a" : "#ccdfa4",
+      width: successRateChart ? 1 : undefined,
+      values: history.map(record => record[field][activity]),
     }];
+    if (successRateChart) {
+      const recentRates = historyBuffer.map(record => record.activitySuccessRates[activity]);
+      series.push({
+        name: SUCCESS_RATE_AVERAGE_TICKS + "-tick moving average",
+        color: "#f6ca86",
+        width: 2.3,
+        values: movingSuccessRates(recentRates).slice(-history.length),
+      });
+    }
     legend = series;
-    write("history-caption", "Mean decision probability by tick");
+    write("history-caption", successRateChart ? "Done ÷ Tried by tick" : "Mean decision probability by tick");
   } else if (metric.value === "patterns") {
     series = [
       {name: "Distinct patterns", color: "#ccdfa4", values: history.map(record => record.distinctPatterns)},
@@ -991,14 +1290,18 @@ function renderHistory() {
   }
   if (first > 0) $("history-caption").textContent += " · Latest " + int.format(CHART_WINDOW) + " ticks";
   const lastPoint = series[0].values.at(-1);
-  const formatValue = dominanceChart ? formatOnFraction : probabilityChart ? formatProbability : axisValue;
-  const noValue = probabilityChart ? ". No probability recorded at this tick."
+  const formatValue = successRateChart || dominanceChart ? formatOnFraction : probabilityChart ? formatProbability : axisValue;
+  const noValue = successRateChart ? ". No attempts at this tick."
+    : probabilityChart ? ". No probability recorded at this tick."
     : inputChart ? ". No living entity has this connection ON." : ". No surviving entities.";
+  const average = successRateChart ? series[1].values.at(-1) : null;
   $("history").setAttribute("aria-label", series[0].name + " from tick " + first + " to " + last
-    + (lastPoint === null ? noValue : ". Latest value " + formatValue(lastPoint) + "."));
-  const resets = chart === "genetics" ? history.filter(record => record.geneSwitchReset).map(record => record.tick) : [];
+    + (lastPoint === null ? noValue : ". Latest value " + formatValue(lastPoint) + ".")
+    + (average === null ? "" : " " + series[1].name + " " + formatOnFraction(average) + "."));
+  const resets = entityChart ? history.filter(record => record.geneSwitchReset).map(record => record.tick) : [];
   drawLegend(resets.length ? [...legend, {name: "Manual gene reset", color: "#d6a76c"}] : legend);
-  const kind = coefficientChart ? "coefficient" : probabilityChart ? "probability" : dominanceChart ? "fraction" : chart;
+  const kind = coefficientChart ? "coefficient" : probabilityChart ? "probability"
+    : successRateChart ? "success-rate" : dominanceChart ? "fraction" : chart;
   drawChart(context, series, first, last, kind, resets);
   if (inputChart) {
     const index = connectionIndex(Math.floor(gene / COEFFICIENTS.length), coefficientIndex);
@@ -1035,8 +1338,15 @@ function drawLegend(legend) {
 function drawChart({ctx, width, height}, series, first, last, kind, resets) {
   const coefficientBand = kind === "coefficient";
   const fraction = kind === "fraction";
-  const [min, max] = fraction ? [0, 1] : plotRange(series, !coefficientBand, kind === "probability" ? 0.01 : 1);
-  const formatAxis = fraction || kind === "probability" ? percent.format : axisValue;
+  const successRate = kind === "success-rate";
+  let [min, max] = fraction ? [0, 1]
+    : plotRange(series, !coefficientBand && !successRate, kind === "probability" ? 0.01 : 1);
+  if (successRate) {
+    // Keep the percentage scale valid and give its labels room to remain distinct.
+    min = Math.max(0, Math.min(min, 0.999));
+    max = Math.min(1, Math.max(max, min + 0.001));
+  }
+  const formatAxis = fraction || successRate || kind === "probability" ? percent.format : axisValue;
   const left = 47;
   const right = width - 13;
   const top = 9;
@@ -1101,12 +1411,13 @@ function drawChart({ctx, width, height}, series, first, last, kind, resets) {
       ctx.closePath();
       start = end;
     }
-    ctx.fillStyle = "#b9ce8239";
+    ctx.fillStyle = STANDARD_DEVIATION_FILL;
     ctx.fill();
   }
   const lines = coefficientBand ? series.slice(0, 1) : series;
   for (const line of lines) {
     ctx.beginPath();
+    const points = [];
     let located = false;
     let latestIndex = -1;
     line.values.forEach((value, index) => {
@@ -1114,17 +1425,28 @@ function drawChart({ctx, width, height}, series, first, last, kind, resets) {
         located = false;
         return;
       }
-      if (located) ctx.lineTo(x(index), y(value));
-      else ctx.moveTo(x(index), y(value));
+      if (located) {
+        ctx.lineTo(x(index), y(value));
+      } else {
+        ctx.moveTo(x(index), y(value));
+        if (successRate && !Number.isFinite(line.values[index + 1])) points.push(index);
+      }
       latestIndex = index;
       located = true;
     });
     ctx.strokeStyle = line.color;
-    ctx.lineWidth = 1.7;
+    ctx.lineWidth = line.width ?? 1.7;
     ctx.stroke();
     if (latestIndex >= 0) {
+      if (points.at(-1) !== latestIndex) points.push(latestIndex);
       ctx.beginPath();
-      ctx.arc(x(latestIndex), y(line.values[latestIndex]), 2.7, 0, Math.PI * 2);
+      for (const index of points) {
+        const radius = index === latestIndex ? 2.7 : 1.6;
+        const positionX = x(index);
+        const positionY = y(line.values[index]);
+        ctx.moveTo(positionX + radius, positionY);
+        ctx.arc(positionX, positionY, radius, 0, Math.PI * 2);
+      }
       ctx.fillStyle = line.color;
       ctx.fill();
     }
@@ -1168,8 +1490,21 @@ function mountEvents() {
   });
   $("restart").addEventListener("click", newRun);
   $("export").addEventListener("click", () => {
-    $("export").disabled = true;
+    fileBusy = true;
+    syncFileButtons();
+    setFileStatus("Preparing export…");
     post("export");
+  });
+  const fileInput = $("import-file");
+  $("import").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file || fileBusy) return;
+    fileBusy = true;
+    syncFileButtons();
+    setFileStatus("Reading saved run…");
+    post("import", {file, nextRunId: runId + 1});
   });
   $("dish").addEventListener("click", event => watchCell(pointCell(event)));
   $("dish").addEventListener("pointermove", event => {
@@ -1186,14 +1521,16 @@ function mountEvents() {
   });
   $("dish").addEventListener("keydown", keyMove);
   $("entity-select").addEventListener("change", event => watchCell(watch.cell, Number(event.target.value)));
-  $("gene-select").addEventListener("change", renderHistory);
+  $("entity-metric").addEventListener("change", renderHistory);
+  $("sigmoid-input").addEventListener("change", renderSigmoid);
   for (const button of all("[data-chart]")) {
     button.addEventListener("click", () => {
       chart = button.dataset.chart;
       for (const tab of all("[data-chart]")) tab.setAttribute("aria-pressed", String(tab === button));
-      $("population-genetics").hidden = chart !== "genetics";
-      $("gene-select-row").hidden = chart !== "genetics";
+      $("population-genetics").hidden = chart !== "entities";
+      $("entity-metric-row").hidden = chart !== "entities";
       renderHistory();
+      renderSigmoid();
     });
   }
   new ResizeObserver(() => {
@@ -1201,6 +1538,7 @@ function mountEvents() {
     renderHistory();
   }).observe($("dish"));
   new ResizeObserver(renderHistory).observe($("history"));
+  new ResizeObserver(renderSigmoid).observe($("sigmoid-curve"));
 }
 
 function mountFavicon() {
@@ -1284,14 +1622,22 @@ function mountFavicon() {
 
 function launch() {
   mountControls();
-  const source = new Blob([$("worker-source").textContent], {type: "text/javascript"});
-  const url = URL.createObjectURL(source);
-  worker = new Worker(url);
+  const embedded = $("worker-source");
+  if (embedded) {
+    const source = new Blob([$("model-source").textContent, "\n", embedded.textContent], {type: "text/javascript"});
+    const url = URL.createObjectURL(source);
+    worker = new Worker(url);
+    worker.addEventListener("message", () => URL.revokeObjectURL(url), {once: true});
+  } else {
+    worker = new Worker("./worker.js");
+  }
   worker.addEventListener("message", receive);
   worker.addEventListener("error", () => {
+    fileBusy = false;
     renderStatus("error", snapshot?.tick || 0);
     $("run-notice").textContent = "The simulation worker could not start.";
     $("restart").disabled = true;
+    $("import").disabled = true;
   });
   mountEvents();
   updateTiming();
@@ -1299,4 +1645,8 @@ function launch() {
 }
 
 const setFaviconRunning = mountFavicon();
-launch();
+if (location.protocol === "file:" && !$("worker-source")) {
+  location.replace("./petri-dish.html");
+} else {
+  launch();
+}

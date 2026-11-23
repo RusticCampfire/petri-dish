@@ -2,20 +2,40 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const model = require("./src/model.js");
-const root = __dirname;
-const read = name => fs.readFileSync(path.join(root, "src", name), "utf8");
-const config = {};
-for (const name of ["ACTIVITIES", "ACTIVITY_ENABLED_KEYS", "COEFFICIENTS", "GENE_TREE", "DEFAULT_SETUP", "DEFAULT_PARAMS", "DEFAULT_PAUSE_TICK"]) {
-  config[name] = model[name];
+const {execFileSync} = require("node:child_process");
+const {parseArgs} = require("node:util");
+const {VERSION} = require("./src/model.js");
+
+const {values} = parseArgs({options: {pages: {type: "boolean"}}});
+const source = path.join(__dirname, "src");
+const output = path.join(__dirname, values.pages ? "docs" : "dist");
+const read = name => fs.readFileSync(path.join(source, name), "utf8");
+const template = read("index.html");
+const style = read("style.css");
+
+function writePage(filename, scripts, downloads = "") {
+  const substitutions = {VERSION, STYLE: style, SCRIPTS: scripts, DOWNLOADS: downloads};
+  const html = template.replace(/%%(VERSION|STYLE|SCRIPTS|DOWNLOADS)%%/g, (_, key) => substitutions[key]);
+  fs.writeFileSync(path.join(output, filename), html);
 }
-const inline = {
-  VERSION: model.VERSION,
-  STYLE: read("style.css"),
-  WORKER: read("model.js") + "\n" + read("worker.js"),
-  APP: "const CONFIG = " + JSON.stringify(config) + ";\n" + read("app.js"),
-};
-const output = read("index.html").replace(/%%(VERSION|STYLE|WORKER|APP)%%/g, (_, name) => inline[name]);
-const dist = path.join(root, "docs");
-fs.mkdirSync(dist, {recursive: true});
-fs.writeFileSync(path.join(dist, "index.html"), output);
+
+fs.mkdirSync(output, {recursive: true});
+for (const file of ["model.js", "run-file.js", "worker.js", "app.js"]) {
+  fs.copyFileSync(path.join(source, file), path.join(output, file));
+}
+
+writePage("index.html", `<script src="./model.js"></script>
+  <script src="./app.js"></script>`, `    <nav class="downloads" aria-label="Simulator downloads">
+      <a href="./model.js" download>Model source</a>
+      <a href="./petri-dish-node.tar.gz" download>Node.js kit</a>
+      <a href="./petri-dish.html" download>Offline simulator</a>
+    </nav>`);
+
+// Keep the downloadable HTML self-contained, using the very same sources.
+writePage("petri-dish.html", `<script id="model-source">${read("model.js")}</script>
+  <script type="text/plain" id="worker-source">${read("run-file.js")}\n${read("worker.js")}</script>
+  <script>${read("app.js")}</script>`);
+
+execFileSync("tar", ["-czf", path.join(output, "petri-dish-node.tar.gz"),
+  "-C", source, "model.js", "run-file.js", "run.cjs", "package.json", "-C", __dirname, "HEADLESS.md"]);
+if (values.pages) fs.writeFileSync(path.join(output, ".nojekyll"), "");

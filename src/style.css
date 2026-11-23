@@ -90,7 +90,13 @@ h2 { font-size: 15px; line-height: 1.25; letter-spacing: -.016em; font-weight: 6
   margin: 0 auto;
   padding: 20px clamp(15px, 3vw, 36px) 16px;
 }
-.page-actions { display: flex; justify-content: flex-end; max-width: 1510px; margin: 0 auto; padding: 0 clamp(15px, 3vw, 36px) 24px; }
+.page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 1510px; margin: 0 auto; padding: 0 clamp(15px, 3vw, 36px) 24px; }
+.downloads { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-right: auto; }
+.downloads a { color: var(--muted); font-size: .875rem; text-underline-offset: .2em; }
+.downloads a:hover, .downloads a:focus-visible { color: var(--ink); }
+.file-status { flex-basis: 100%; color: var(--muted); font-size: 12px; text-align: right; }
+.file-status:empty { display: none; }
+.file-status.error { color: var(--danger); }
 .left-rail, .center, .right-rail { display: grid; gap: 15px; min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
 .playback, .resource-panel, .activity-panel, .inspector-panel { padding: 15px; }
@@ -220,6 +226,7 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .entity-legend i { display: block; width: 7px; height: 7px; border-radius: 50%; background: #d3e9a5; box-shadow: 0 0 5px #d3e9a550; }
 
 .tabs { display: flex; gap: 2px; padding: 2px; border: 1px solid #3c3e31; background: #181a14; border-radius: 6px; }
+.history-head, .history-head .tabs { flex-wrap: wrap; }
 .tabs button { border: 0; border-radius: 4px; background: transparent; color: var(--muted); padding: 5px 7px; font-size: 10px; font-weight: 570; }
 .tabs button[aria-pressed=true] { background: #3b3827; color: #f2dab2; }
 .tabs button:hover { color: var(--ink); }
@@ -232,8 +239,8 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .chart-legend { color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; min-height: 32px; padding: 1px 15px 9px; font-size: 10px; }
 .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .chart-legend i { display: inline-block; background: var(--swatch); width: 9px; height: 3px; border-radius: 3px; }
-.gene-choice { display: flex; align-items: center; gap: 8px; padding: 0 15px 10px; color: var(--muted); font-size: 11px; }
-.gene-choice select { min-width: 0; }
+.entity-metric-choice { display: flex; align-items: center; gap: 8px; padding: 0 15px 10px; color: var(--muted); font-size: 11px; }
+.entity-metric-choice select { min-width: 0; }
 .population-genetics { margin: 0 15px; padding: 10px 0 12px; border-top: 1px solid var(--line); }
 select { padding: 4px 6px; font-size: 11px; }
 
@@ -264,7 +271,7 @@ select { padding: 4px 6px; font-size: 11px; }
 .activity-log ol { max-height: 9rem; overflow-y: auto; list-style: none; padding: 0; margin: 3px 0 8px; font-size: 12px; }
 .activity-log li + li { margin-top: 3px; }
 .subtle { color: var(--soft); font-size: 10px; white-space: nowrap; }
-.activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 54px 42px 28px 28px; align-items: center; gap: 4px; }
+.activity-head, .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) 52px 38px 27px 27px 48px; align-items: center; gap: 3px; }
 .activity-head { align-items: end; padding: 9px 0 4px; color: var(--soft); font-size: 10px; line-height: 1.2; }
 .activity-head > span:not(:first-child), .activity-row > span:not(:first-child) { text-align: right; }
 .activity-row { min-height: 25px; border-top: 1px solid var(--line); color: #dfdccd; font-size: 11px; }
@@ -311,8 +318,36 @@ select { padding: 4px 6px; font-size: 11px; }
 .coefficient-table td small:empty { display: none; }
 .coefficient-table thead th { color: var(--muted); }
 .population-genetics .coefficient-table { font-size: 11px; }
-.population-genetics td:last-child, .entity-genes td:nth-child(2) { color: var(--mint); }
+.population-genetics td:nth-last-child(-n+2), .entity-genes td:nth-child(2) { color: var(--mint); }
 .population-genetics .coefficient-table th, .population-genetics .coefficient-table td { padding: 5px 4px; }
+.sigmoid-row { cursor: pointer; }
+.sigmoid-row:hover { background: #282d20; }
+.sigmoid-row.selected { background: #313a25; }
+.sigmoid-row.selected th { box-shadow: inset 2px 0 var(--mint); }
+.sigmoid-row button { padding: 2px 3px; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; }
+.sigmoid-row button:hover { text-decoration: underline; }
+.sigmoid-row button:focus-visible { outline-offset: 0; }
+.sigmoid-figure {
+  min-width: 0;
+  margin: 11px 0 0;
+  padding: 9px 10px;
+  background: #181b14;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.sigmoid-head, .sigmoid-caption { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; }
+.sigmoid-head strong { color: var(--mint); font-size: 12px; }
+.sigmoid-control { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.sigmoid-control select { min-width: 0; }
+.sigmoid-plot { position: relative; height: 155px; margin: 7px 0 3px; }
+.sigmoid-plot canvas { display: block; width: 100%; height: 100%; }
+.sigmoid-plot p { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+.sigmoid-caption { color: var(--muted); font-size: 11px; }
+.sigmoid-spread i { display: inline-block; width: 9px; height: 4px; border-radius: 2px; background: #8c9c6b; vertical-align: middle; }
+.sigmoid-spread strong { color: var(--mint); font-family: var(--mono); }
+.sigmoid-estimate i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.sigmoid-estimate strong { color: var(--accent-bright); font-family: var(--mono); }
+.sigmoid-figure .note { padding: 0; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .noscript { max-width: 400px; margin: auto; padding: 20px; }

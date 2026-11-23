@@ -5,6 +5,8 @@ const {test} = require("node:test");
 const {
   Simulation, Random, ACTIVITY_ENABLED_KEYS, DEFAULT_SETUP, DEFAULT_PARAMS, feedCell, foodIncome, mutateValue, chooseActivity, circumference,
 } = require("../src/model.js");
+const {saveRunFile, readRunFile} = require("../src/run-file.js");
+const ALL_GENE_SWITCHES_ON = Object.fromEntries(Object.keys(DEFAULT_SETUP.startingGeneSwitches).map(key => [key, true]));
 
 const approx = (actual, expected) => assert.ok(
   Math.abs(actual - expected) <= 1e-10 * Math.max(1, Math.abs(expected)),
@@ -25,7 +27,10 @@ function deterministicEntropy() {
 function quiet(params = {}, setup = {}) {
   return new Simulation({
     entropy: deterministicEntropy(),
-    setup: {radius: 0, founders: 1, initialEnergy: 5, ...setup},
+    setup: {
+      radius: 0, founders: 1, initialEnergy: 5, weightRange: 0.01, ...setup,
+      startingGeneSwitches: {...ALL_GENE_SWITCHES_ON, ...setup.startingGeneSwitches},
+    },
     params: {foodMean: 0, suddenDeath: 0, persistence: 0, connectionCost: 0, mutationRate: 0, switchMutationRate: 0, ...params},
   });
 }
@@ -41,16 +46,80 @@ test("the default dish has 91 hexes and 30 distinct, viable founders", () => {
   assert.equal(sim.cells.filter(cell => cell.neighbors.length === 6).length, 61);
   assert.equal(new Set(sim.entities.map(entity => entity.cell)).size, 30);
   assert.equal(sim.minMass, 0.1);
-  assert.equal(sim.history[0].activeConnections, 450);
-  assert.equal(sim.history[0].effectiveActiveConnections, 450);
-  assert.deepEqual(sim.history[0].connectionOnFractions, Array(15).fill(1));
+  assert.equal(sim.params.suddenDeath, 0.008);
+  assert.equal(sim.params.switchMutationRate, 0);
+  assert.equal(sim.setup.weightRange, 5);
+  assert.equal(sim.history[0].activeConnections, 30);
+  assert.equal(sim.history[0].effectiveActiveConnections, 30);
+  const expectedSwitches = [...Array(13).fill(false), true, false];
+  assert.deepEqual(sim.history[0].connectionOnFractions, expectedSwitches.map(Number));
   for (const entity of sim.entities) {
     approx(entity.surface, 2 * Math.sqrt(Math.PI * 10));
     assert.equal(entity.genes.length, 20);
-    assert.ok(entity.genes.every(Number.isFinite));
-    assert.deepEqual(sim.inspect(entity.cell, entity.id).entity.connectionSwitches, Array(15).fill(true));
+    assert.ok(entity.genes.every((value, i) =>
+      i % 4 === 0 || i === 18 ? Number.isFinite(value) : value === null));
+    assert.ok(Math.abs(entity.genes[18]) <= 5);
+    assert.deepEqual(sim.inspect(entity.cell, entity.id).entity.connectionSwitches, expectedSwitches);
     assert.equal(entity.energy, 40);
   }
+});
+
+test("a compressed save preserves the population, history and all state used on the next tick", async () => {
+  const sim = quiet({connectionCost: 0.01, failedAttemptFraction: 0.03}, {radius: 1, founders: 2, initialEnergy: 12});
+  const [parent, other] = sim.entities;
+  plan(parent, -500, -500, -500, -500, 500);
+  plan(other);
+  assert.equal(sim.step().births, 1);
+  const child = sim.entities.at(-1);
+  child.energy = 0;
+  plan(parent);
+  sim.applyParameters({persistence: 0.1, growthEnabled: false});
+  assert.equal(sim.step({"movement.energy": false}).persistenceDeaths, 1);
+  sim.entropy = words => words.fill(8797);
+
+  const {blob, gzip} = await saveRunFile(sim.exportResults(), true);
+  assert.equal(gzip, true);
+  const restored = Simulation.fromResults(await readRunFile(blob), {entropy: sim.entropy});
+  assert.deepEqual(restored.snapshot(0), sim.snapshot(0));
+  assert.equal(restored.nextId, child.id + 1);
+  assert.deepEqual(restored.recentLifespans, [1]);
+  assert.deepEqual(restored.exportResults(), sim.exportResults());
+  for (let i = 0; i < 5; i++) assert.deepEqual(restored.step(), sim.step());
+  assert.deepEqual(restored.exportResults(), sim.exportResults());
+});
+
+test("earlier JSON exports can resume with their previous defaults", async () => {
+  const sim = quiet();
+  plan(sim.entities[0], -500, -500, -500, 100);
+  sim.step();
+  const data = sim.exportResults();
+  delete data.checkpoint;
+  delete data.setup.weightRange;
+  delete data.setup.startingGeneSwitches;
+  for (const parameters of [data.initialParameters, data.appliedParameters]) {
+    delete parameters.failedAttemptFraction;
+    delete parameters.suddenDeath;
+    delete parameters.switchMutationRate;
+  }
+  for (const tick of data.history) {
+    delete tick.meanDecisionInputs;
+    delete tick.decisionEnergySD;
+  }
+  data.version = "0.3";
+  const restored = Simulation.fromResults(await readRunFile(new Blob([JSON.stringify(data)])), {entropy: deterministicEntropy()});
+  assert.deepEqual(restored.snapshot(0), sim.snapshot(0));
+  assert.equal(restored.params.failedAttemptFraction, 0);
+  assert.equal(restored.params.suddenDeath, 0.002);
+  assert.equal(restored.params.switchMutationRate, 0.001);
+  assert.equal(restored.setup.weightRange, 0.01);
+  assert.deepEqual(restored.setup.startingGeneSwitches, ALL_GENE_SWITCHES_ON);
+  assert.equal(restored.history.length, 2);
+  assert.equal(restored.history.at(-1).meanDecisionInputs, undefined);
+  assert.equal(restored.history.at(-1).decisionEnergySD, undefined);
+  const resumed = restored.step();
+  assert.equal(resumed.tick, 2);
+  assert.deepEqual(resumed.meanDecisionInputs, {mass: 10, energy: 4.998, waste: 0});
+  assert.equal(resumed.decisionEnergySD, 0);
 });
 
 test("feeding shares by surface and reallocates any capacity-limited shares", () => {
@@ -148,21 +217,27 @@ test("successful division terminates execution and newborns act next tick", () =
   assert.equal(deaths.meanLifespan, 1.5);
 });
 
-test("decision readouts average the probabilities used before execution and omit newborns", () => {
+test("decision readouts measure inputs and probabilities before execution and omit newborns", () => {
   const sim = quiet({foodMean: 2, foodSD: 0, persistence: 0.1}, {radius: 1, founders: 2});
   const [parent, other] = sim.entities;
   const initial = sim.history[0];
   assert.equal(initial.decisionCount, 0);
+  assert.equal(initial.meanDecisionInputs, null);
+  assert.equal(initial.decisionEnergySD, null);
   assert.deepEqual(initial.meanDecisionProbabilities, [null, null, null, null, null]);
   assert.equal(sim.inspect(parent.cell, parent.id).entity.lastDecisionProbabilities, null);
   plan(parent, -3, 100, -500, -500, 200);
   [parent.genes[1], parent.genes[2], parent.genes[3]] = [0.1, 0.25, 0.5];
   plan(other, -3);
+  other.energy = 8;
 
   const result = sim.step();
   const child = sim.entities[2];
   assert.equal(result.population, 3);
   assert.equal(result.decisionCount, 2);
+  assert.deepEqual(result.meanDecisionInputs, {mass: 10, energy: 7.5, waste: 1});
+  approx(result.decisionEnergySD, 1.5);
+  assert.notEqual(result.energy / result.population, result.meanDecisionInputs.energy);
   const recorded = sim.inspect(parent.cell, parent.id).entity.lastDecisionProbabilities;
   approx(recorded[0], 0.5);
   assert.ok(recorded[2] > 0);
@@ -170,7 +245,10 @@ test("decision readouts average the probabilities used before execution and omit
   assert.equal(sim.inspect(child.cell, child.id).entity.lastDecisionProbabilities, null);
   assert.equal(sim.exportResults().entities[2].lastDecisionProbabilities, null);
   sim.applyParameters({suddenDeath: 1});
-  assert.deepEqual(sim.step().meanDecisionProbabilities, [null, null, null, null, null]);
+  const extinct = sim.step();
+  assert.deepEqual(extinct.meanDecisionProbabilities, [null, null, null, null, null]);
+  assert.equal(extinct.meanDecisionInputs, null);
+  assert.equal(extinct.decisionEnergySD, null);
 });
 
 test("activity switches exclude decisions and let the same coefficients resume on a later tick", () => {
@@ -189,12 +267,15 @@ test("activity switches exclude decisions and let the same coefficients resume o
   assert.deepEqual(excluded.meanDecisionProbabilities, [null, null, null, null, null]);
   assert.deepEqual(before.meanDecisionProbabilities, [null, 1, null, null, null]);
   assert.equal(excluded.decisionCount, 0);
+  assert.equal(excluded.meanDecisionInputs, null);
+  assert.equal(excluded.decisionEnergySD, null);
   assert.equal(excluded.foodConsumed, 1);
   assert.equal(excluded.births, 0);
   assert.ok(excluded.activities.every(({selected, attempted, succeeded}) => selected + attempted + succeeded === 0));
   assert.equal(sim.inspect(entity.cell, entity.id).entity.lastDecisionProbabilities, null);
   assert.deepEqual(entity.genes, original);
   assert.equal(entity.mass, 11);
+  approx(entity.energy, 40 + 2 - 1.2);
 
   sim.applyParameters({growthEnabled: true});
   const resumed = sim.step();
@@ -209,8 +290,8 @@ test("activity switches exclude decisions and let the same coefficients resume o
   ]);
 });
 
-test("infeasible division spends nothing and later choices still execute", () => {
-  const sim = quiet({}, {initialEnergy: 0.2});
+test("a zero failed-attempt fraction preserves the cost-free failure of division", () => {
+  const sim = quiet({failedAttemptFraction: 0}, {initialEnergy: 0.2});
   const parent = sim.entities[0];
   plan(parent, -500, -500, 100, 90, 200);
   const frame = sim.step();
@@ -222,6 +303,83 @@ test("infeasible division spends nothing and later choices still execute", () =>
   assert.equal(frame.activities[3].succeeded, 0);
   approx(parent.mass, 9);
   approx(parent.energy, 1.2);
+});
+
+test("failed reproduction reduces the energy available for the next selected activity", () => {
+  const sim = quiet({}, {initialEnergy: 1.21});
+  const entity = sim.entities[0];
+  plan(entity, -500, 100, -500, -500, 200);
+  const frame = sim.step();
+  assert.equal(sim.initialParams.failedAttemptFraction, 0.01);
+  assert.deepEqual(frame.activities[4], {selected: 1, attempted: 1, succeeded: 0});
+  assert.deepEqual(frame.activities[1], {selected: 1, attempted: 1, succeeded: 0});
+  assert.equal(frame.births, 0);
+  assert.equal(frame.foodRecycled, 0);
+  assert.equal(entity.mass, 10);
+  approx(entity.energy, 1.21 - 0.02 - 0.012);
+});
+
+test("failed movement charges by the mass at execution time", () => {
+  const sim = quiet();
+  const entity = sim.entities[0];
+  plan(entity, -500, -500, -500, 100);
+  assert.deepEqual(sim.step().activities[3], {selected: 1, attempted: 1, succeeded: 0});
+  approx(entity.energy, 5 - 0.002);
+
+  plan(entity, -500, 200, -500, 100);
+  assert.deepEqual(sim.step().activities[3], {selected: 1, attempted: 1, succeeded: 0});
+  assert.equal(entity.cell, 0);
+  assert.equal(entity.mass, 11);
+  approx(entity.energy, 5 - 0.002 - 1.2 - 0.0022);
+
+  const mobile = quiet({}, {radius: 1});
+  const mover = mobile.entities[0];
+  const neighbors = mobile.cells[mover.cell].neighbors;
+  plan(mover, -500, -500, -500, 100);
+  assert.equal(mobile.step().activities[3].succeeded, 1);
+  assert.ok(neighbors.includes(mover.cell));
+  approx(mover.energy, 4.8);
+});
+
+test("failed shrinking charges for the potential conversion without changing mass or waste", () => {
+  const sim = quiet({shrinkFraction: 0.5, wasteCapacity: 0.2}, {initialWaste: 0.5});
+  const entity = sim.entities[0];
+  const surface = entity.surface;
+  plan(entity, -500, -500, 100);
+  const frame = sim.step();
+  assert.deepEqual(frame.activities[2], {selected: 1, attempted: 1, succeeded: 0});
+  assert.deepEqual([entity.mass, entity.surface, entity.waste], [10, surface, 0.5]);
+  approx(entity.energy, 5 - 0.05);
+});
+
+test("excretion charges for actual removal, with no failure cost when waste is empty", () => {
+  for (const {energy, waste, endEnergy, endWaste, succeeded} of [
+    {energy: 5, waste: 0, endEnergy: 5, endWaste: 0, succeeded: 0},
+    {energy: 0, waste: 2, endEnergy: 0, endWaste: 2, succeeded: 0},
+    {energy: 0.025, waste: 2, endEnergy: 0, endWaste: 1.5, succeeded: 1},
+    {energy: 5, waste: 2, endEnergy: 4.9, endWaste: 0, succeeded: 1},
+  ]) {
+    const sim = quiet({failedAttemptFraction: 1}, {initialEnergy: energy, initialWaste: waste});
+    const entity = sim.entities[0];
+    plan(entity, 100);
+    assert.deepEqual(sim.step().activities[0], {selected: 1, attempted: 1, succeeded});
+    approx(entity.energy, endEnergy);
+    approx(entity.waste, endWaste);
+  }
+});
+
+test("a failure charge can leave zero energy and the entity still executes later choices", () => {
+  const sim = quiet({persistence: 0.1, excretionCost: 0}, {initialEnergy: 1.001, initialWaste: 1});
+  const entity = sim.entities[0];
+  plan(entity, 100, -500, -500, 200);
+  const frame = sim.step();
+  assert.equal(frame.population, 1);
+  assert.equal(frame.persistenceDeaths, 0);
+  assert.deepEqual(frame.activities[3], {selected: 1, attempted: 1, succeeded: 0});
+  assert.equal(frame.activities[0].succeeded, 1);
+  assert.equal(entity.energy, 0);
+  assert.equal(entity.waste, 0);
+  assert.equal(sim.step().persistenceDeaths, 1);
 });
 
 test("growth and shrinking use execution-time mass and enforce the fixed minimum", () => {
@@ -377,6 +535,7 @@ test("persistence charges only effective ON inputs, even zero weights, before in
   assert.equal(both.effectiveActiveConnections, 5);
   assert.equal(both.connectionMaintenancePaid, 1.25);
   assert.equal(entity.energy, 9.75);
+  assert.equal(both.meanDecisionInputs.energy, 9.75);
   approx(both.meanDecisionProbabilities[1], 1 / (1 + Math.exp(2.25)));
 
   sim.applyParameters({movementEnabled: false});
@@ -523,8 +682,11 @@ test("a sparse founder tree changes only the chosen inputs in the seeded preview
   assert.equal(sparse.history[0].connectionHistogram[1], 4);
   assert.equal(sparse.history[0].distinctPatterns, 1);
   assert.deepEqual(sparse.geneSwitchChanges, []);
-  const partial = quiet({}, {startingGeneSwitches: {"growth.mass": false}});
-  assert.equal(partial.history[0].activeConnections, 14);
+  const partial = new Simulation({
+    entropy: deterministicEntropy(),
+    setup: {radius: 0, founders: 1, startingGeneSwitches: {"growth.mass": true}},
+  });
+  assert.equal(partial.history[0].activeConnections, 2);
 });
 
 test("manual edits clear or redraw every targeted weight once at the start of the tick", () => {
