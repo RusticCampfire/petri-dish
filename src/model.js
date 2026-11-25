@@ -3,7 +3,7 @@
 // Petri Dish's simulation engine. In Node.js, require("./model.js") exposes
 // the same Simulation class used by the browser worker. One step is one tick.
 const Petri = (() => {
-  const VERSION = "0.4.1";
+  const VERSION = "0.5";
   const ACTIVITY_NAMES = {
     excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
     movementEnabled: "Movement", reproductionEnabled: "Reproduction",
@@ -44,6 +44,20 @@ const Petri = (() => {
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
     ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
+  const SC_GENETIC_KEYS = Object.freeze([
+    "mutationRate", "switchMutationRate", "mutationWidth", "mutationSharpness", "mutationTail",
+  ]);
+  const DEFAULT_SC_CYCLE = Object.freeze({
+    enabled: false, period: 2500, searchProportion: 0.30, transitionProportion: 0.10,
+    search: Object.freeze({
+      mutationRate: 0.32, switchMutationRate: 0, mutationWidth: 1, mutationSharpness: 1, mutationTail: 1.5,
+    }),
+    consolidation: Object.freeze({
+      mutationRate: 0.01, switchMutationRate: 0, mutationWidth: 0.15, mutationSharpness: 16, mutationTail: 4,
+    }),
+  });
+  const SC_CHECKPOINT_FORMAT = 3;
+  const SC_TICK_LENGTH_CHECKPOINT_FORMAT = 4;
   const DEFAULT_PAUSE_TICK = 0;
   const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
   const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
@@ -137,6 +151,15 @@ const Petri = (() => {
         : sign * Math.sign(value) * Math.exp(Math.log(Math.abs(value)) + logMagnitude);
       if (Number.isFinite(candidate)) return candidate;
     }
+  }
+
+  function sausageProfile(delta, {mutationWidth, mutationSharpness, mutationTail}) {
+    if (delta === 0) return 1;
+    if (mutationWidth === 0) return 0;
+    // Evaluate the sampling density relative to its peak in log space.
+    const power = mutationSharpness * (Math.log(Math.abs(delta)) - Math.log(mutationWidth));
+    const logBase = Math.max(0, power) + Math.log1p(Math.exp(-Math.abs(power)));
+    return Math.exp((-mutationTail / mutationSharpness) * logBase);
   }
 
   function sigmoid(logit, rareOdds = Math.exp(-Math.abs(logit))) {
@@ -332,8 +355,109 @@ const Petri = (() => {
     return params;
   }
 
+  function scEndpoint(changes, base) {
+    if (!isRecord(changes) || Object.keys(changes).some(key => !SC_GENETIC_KEYS.includes(key))) {
+      throw new TypeError("SC Cycle endpoints can only set the five inheritance parameters.");
+    }
+    return Object.freeze({...base, ...savedParameters(changes)});
+  }
+
+  function scGeneticParameters(values) {
+    return Object.fromEntries(SC_GENETIC_KEYS.filter(key => Object.hasOwn(values, key)).map(key => [key, values[key]]));
+  }
+
+  function scCycleSettings(changes = {}, base = DEFAULT_SC_CYCLE) {
+    if (!isRecord(changes)) throw new TypeError("Invalid SC Cycle settings.");
+    const {period, searchLength = 0, transitionLength = 0, enabled, searchProportion, transitionProportion}
+      = {...base, ...changes};
+    if (!isCount(period) || period === 0) throw new RangeError("The SC Cycle requires a positive whole-tick period.");
+    const endpoints = {
+      search: scEndpoint(changes.search === undefined ? {} : changes.search, base.search),
+      consolidation: scEndpoint(changes.consolidation === undefined ? {} : changes.consolidation, base.consolidation),
+    };
+    if (base.searchLength !== undefined || Object.hasOwn(changes, "searchLength") || Object.hasOwn(changes, "transitionLength")) {
+      if (!isCount(searchLength) || !isCount(transitionLength) || searchLength > period - transitionLength) {
+        throw new RangeError("Search and transition lengths must be whole ticks and fit within the period.");
+      }
+      return Object.freeze({enabled: searchLength > 0, period, searchLength, transitionLength, ...endpoints});
+    }
+    // Keep proportion-based settings readable for existing checkpoints and Node callers.
+    if (typeof enabled !== "boolean" || !inRange(searchProportion, 0, 1) || !inRange(transitionProportion, 0, 1)) {
+      throw new RangeError("The SC Cycle requires an enabled flag and proportions between 0 and 1.");
+    }
+    return Object.freeze({enabled, period, searchProportion, transitionProportion, ...endpoints});
+  }
+
+  function scCycleTiming({period, searchLength, transitionLength, searchProportion, transitionProportion}) {
+    if (searchLength !== undefined) {
+      const transition = searchLength > 0 ? transitionLength / 2 : 0;
+      return {search: searchLength, transition, consolidation: period - searchLength - 2 * transition};
+    }
+    const transition = period * transitionProportion / 2;
+    const stable = period - 2 * transition;
+    const search = stable * searchProportion;
+    return {search, transition, consolidation: stable - search};
+  }
+
+  function smoothstep(progress) {
+    return progress * progress * (3 - 2 * progress);
+  }
+
+  function scCyclePulse(settings, elapsed) {
+    const {search, transition} = scCycleTiming(settings);
+    const offset = elapsed % settings.period;
+    const consolidationStart = search + transition;
+    const returnStart = settings.period - transition;
+    if (offset < search) return {phase: "search", consolidationWeight: 0};
+    if (offset < consolidationStart) {
+      return {phase: "to-consolidation", consolidationWeight: smoothstep((offset - search) / transition)};
+    }
+    if (offset < returnStart) return {phase: "consolidation", consolidationWeight: 1};
+    return {phase: "to-search", consolidationWeight: 1 - smoothstep((offset - returnStart) / transition)};
+  }
+
+  function scCycleReading(settings, tick, start) {
+    if (!settings.enabled || tick < start) return null;
+    const elapsed = (tick - start) % settings.period;
+    const {phase, consolidationWeight} = scCyclePulse(settings, elapsed);
+    const parameters = {};
+    for (const key of SC_GENETIC_KEYS) {
+      const from = settings.search[key];
+      const to = settings.consolidation[key];
+      parameters[key] = consolidationWeight === 1 ? to : from + (to - from) * consolidationWeight;
+    }
+    return {phase, consolidationWeight, elapsed, parameters};
+  }
+
+  function migrateSeasoning(settings, params) {
+    if (!isRecord(settings)) throw new Error("The checkpoint is missing its seasoning settings.");
+    const endpoint = values => Object.fromEntries(SC_GENETIC_KEYS.map(key => [key, values?.[key] ?? params[key]]));
+    return {
+      enabled: true, period: settings.period,
+      searchProportion: settings.searchProportion, transitionProportion: settings.transitionProportion,
+      search: endpoint(settings.search), consolidation: endpoint(settings.consolidation),
+    };
+  }
+
   function savedGeneSwitches(values) {
     return savedOptions(values, DEFAULT_SETUP.startingGeneSwitches, "gene switches");
+  }
+
+  function savedSetup(values, {legacyDefaults = false} = {}) {
+    const {startingGeneSwitches = {}, ...settings} = savedOptions(values, DEFAULT_SETUP, "initial setup");
+    const switches = savedGeneSwitches(startingGeneSwitches);
+    const setup = {
+      ...DEFAULT_SETUP, weightRange: legacyDefaults ? 0.01 : DEFAULT_SETUP.weightRange, ...settings,
+      startingGeneSwitches: Object.fromEntries(CONNECTIONS.map(({key}) =>
+        [key, switches[key] ?? (legacyDefaults || DEFAULT_SETUP.startingGeneSwitches[key])])),
+    };
+    if (!isCount(setup.radius) || setup.radius > 30
+      || !isCount(setup.founders) || setup.founders > 1 + 3 * setup.radius * (setup.radius + 1)
+      || setup.initialMass <= 0 || setup.biasLow > setup.biasHigh
+      || [setup.initialEnergy, setup.initialWaste, setup.initialFood, setup.weightRange].some(value => value < 0)) {
+      throw new Error("The initial setup is out of range.");
+    }
+    return setup;
   }
 
   function savedPlayback(playback) {
@@ -415,8 +539,13 @@ const Petri = (() => {
   }
 
   class Simulation {
-    constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed} = {}) {
+    constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed, scCycle} = {}) {
+      this.scCycle = scCycle === undefined ? DEFAULT_SC_CYCLE : scCycleSettings(scCycle);
       this.params = {...DEFAULT_PARAMS, ...params};
+      if (this.scCycle.searchLength !== undefined) Object.assign(this.params, this.scCycle.consolidation);
+      this.scCycleStartTick = this.scCycle.enabled ? 1 : null;
+      this.scReading = null;
+      this.pendingScCycle = null;
       this.setup = {...DEFAULT_SETUP, ...setup};
       this.setup.startingGeneSwitches = {...DEFAULT_SETUP.startingGeneSwitches, ...setup.startingGeneSwitches};
       this.appliedGeneSwitches = {...this.setup.startingGeneSwitches};
@@ -449,8 +578,13 @@ const Petri = (() => {
     static fromResults(data, {entropy} = {}) {
       if (data?.model !== "Petri Dish") throw new Error("Choose a Petri Dish results file.");
       const checkpoint = data.checkpoint;
-      if (checkpoint === undefined ? !["0.3", "0.3-dev", "0.4"].includes(data.version) : checkpoint?.format !== 1) {
-        throw new Error("This version of the run file is unsupported.");
+      const format = checkpoint?.format;
+      const supported = checkpoint === undefined
+        ? ["0.3", "0.3-dev", "0.4"].includes(data.version)
+        : [1, 2, SC_CHECKPOINT_FORMAT, SC_TICK_LENGTH_CHECKPOINT_FORMAT].includes(format);
+      if (!supported) throw new Error("This version of the run file is unsupported.");
+      if (format >= SC_CHECKPOINT_FORMAT && !isRecord(checkpoint.scCycle)) {
+        throw new Error("The checkpoint is missing its SC Cycle settings.");
       }
       if (!isCount(data.tick) || !inRange(data.minimumMass) || data.minimumMass <= 0
         || !isList(data.activityOrder, ACTIVITIES.length, (name, i) => name === ACTIVITIES[i])
@@ -458,18 +592,7 @@ const Petri = (() => {
         throw new Error("The run file has invalid model data.");
       }
       // Preserve the previous defaults for older files that omit settings.
-      const {startingGeneSwitches = {}, ...savedSetup} = savedOptions(data.setup, DEFAULT_SETUP, "initial setup");
-      const switches = savedGeneSwitches(startingGeneSwitches);
-      const setup = {
-        ...DEFAULT_SETUP, weightRange: 0.01, ...savedSetup,
-        startingGeneSwitches: Object.fromEntries(CONNECTIONS.map(({key}) => [key, switches[key] ?? true])),
-      };
-      if (!isCount(setup.radius) || setup.radius > 30
-        || !isCount(setup.founders) || setup.founders > 1 + 3 * setup.radius * (setup.radius + 1)
-        || setup.initialMass <= 0 || setup.biasLow > setup.biasHigh
-        || [setup.initialEnergy, setup.initialWaste, setup.initialFood, setup.weightRange].some(value => value < 0)) {
-        throw new Error("The run file has an invalid initial setup.");
-      }
+      const setup = savedSetup(data.setup, {legacyDefaults: true});
       const defaults = {...DEFAULT_PARAMS, suddenDeath: 0.002, switchMutationRate: 0.001, failedAttemptFraction: 0};
       const params = {...defaults, ...savedParameters(data.appliedParameters)};
       const initialParams = {...defaults, ...savedParameters(data.initialParameters)};
@@ -498,6 +621,7 @@ const Petri = (() => {
       }
       const simulation = new Simulation({
         setup: {...setup, founders: 0, initialFood: 0}, params, seed: checkpoint?.globalSeed, entropy,
+        scCycle: format === 2 ? migrateSeasoning(checkpoint.seasoning, params) : checkpoint?.scCycle,
       });
       if (!isList(data.cells, simulation.cells.length, (cell, i) =>
         cell?.q === simulation.cells[i].q && cell.r === simulation.cells[i].r && inRange(cell.food))) {
@@ -511,6 +635,15 @@ const Petri = (() => {
       });
       simulation.queueParameters(checkpoint?.pendingParameters ?? {});
       simulation.queueGeneSwitches(checkpoint?.pendingGeneSwitches ?? {});
+      if (checkpoint?.pendingScCycle != null) simulation.queueScCycle(checkpoint.pendingScCycle);
+      if (simulation.scCycle.enabled) {
+        const start = format === 2 ? 1 : checkpoint.scCycleStartTick;
+        if (!isCount(start) || start === 0 || start > Math.max(1, simulation.tick)) {
+          throw new Error("The checkpoint has an invalid SC Cycle start tick.");
+        }
+        simulation.scCycleStartTick = start;
+        simulation.scReading = scCycleReading(simulation.scCycle, simulation.tick, start);
+      }
       for (const key of Object.keys(simulation.totals)) simulation.totals[key] = last.totals[key];
       for (const key of Object.keys(simulation.stats)) simulation.stats[key] = last[key];
       simulation.entities = restoreEntities(data.entities, simulation);
@@ -575,11 +708,20 @@ const Petri = (() => {
     queueParameters(changes) {
       const values = savedParameters(changes);
       if (Object.keys(values).length) this.pendingParameters = {...this.pendingParameters, ...values};
+      const cycle = this.pendingScCycle ?? this.scCycle;
+      if (cycle.searchLength !== undefined) {
+        const consolidation = scGeneticParameters(values);
+        if (Object.keys(consolidation).length) this.queueScCycle({consolidation});
+      }
     }
 
     queueGeneSwitches(changes) {
       const values = savedGeneSwitches(changes);
       if (Object.keys(values).length) this.pendingGeneSwitches = {...this.pendingGeneSwitches, ...values};
+    }
+
+    queueScCycle(changes) {
+      this.pendingScCycle = scCycleSettings(changes, this.pendingScCycle ?? this.scCycle);
     }
 
     applyParameters(changes) {
@@ -625,8 +767,12 @@ const Petri = (() => {
     }
 
     step(geneSwitchResets) {
-      if (this.pendingParameters) {
-        this.applyParameters(this.pendingParameters);
+      const nextCycle = this.pendingScCycle;
+      const changes = nextCycle?.searchLength === undefined
+        ? this.pendingParameters
+        : {...this.pendingParameters, ...nextCycle.consolidation};
+      if (changes) {
+        this.applyParameters(changes);
         this.pendingParameters = null;
       }
       if (this.pendingGeneSwitches) {
@@ -634,6 +780,13 @@ const Petri = (() => {
         this.pendingGeneSwitches = null;
       }
       this.tick++;
+      if (nextCycle) {
+        if (!nextCycle.enabled) this.scCycleStartTick = null;
+        else if (!this.scCycle.enabled) this.scCycleStartTick = this.tick;
+        this.scCycle = nextCycle;
+        this.pendingScCycle = null;
+      }
+      this.scReading = scCycleReading(this.scCycle, this.tick, this.scCycleStartTick);
       this.entropy(this.tickSalt);
       this.random.reseed(this.globalSeed, this.tickSalt);
       this.stats = tickStats();
@@ -852,7 +1005,8 @@ const Petri = (() => {
 
     inherit(original) {
       const genes = original.slice();
-      const {mutationRate, mutationWidth, switchMutationRate} = this.params;
+      const mutation = this.scReading?.parameters ?? this.params;
+      const {mutationRate, mutationWidth, switchMutationRate} = mutation;
       const mutateNumbers = mutationRate > 0 && mutationWidth > 0;
       if (!mutateNumbers && switchMutationRate === 0) return genes;
       for (let activity = 0; activity < ACTIVITIES.length; activity++) {
@@ -865,7 +1019,7 @@ const Petri = (() => {
             continue;
           }
           if (genes[i] === null || !mutateNumbers || this.random.unit() >= mutationRate) continue;
-          const mutated = mutateValue(genes[i], this.params, this.random);
+          const mutated = mutateValue(genes[i], mutation, this.random);
           if (mutated !== genes[i]) this.stats.mutations++;
           genes[i] = mutated;
         }
@@ -987,6 +1141,7 @@ const Petri = (() => {
         energyCapacity, wasteCapacity,
         peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
       };
+      if (this.scReading) result.scCycle = this.scReading;
       this.history.push(result);
       return result;
     }
@@ -1012,6 +1167,8 @@ const Petri = (() => {
 
     exportResults() {
       const enabled = this.enabledActivities();
+      const usesTickLengths = this.scCycle.searchLength !== undefined || this.pendingScCycle?.searchLength !== undefined;
+      const cycling = this.scCycle.enabled || this.pendingScCycle?.enabled;
       return {
         model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
         setup: this.setup, initialParameters: this.initialParams, appliedParameters: {...this.params},
@@ -1041,7 +1198,9 @@ const Petri = (() => {
         history: this.history, entities: this.entities.map(entity => entityState(entity, enabled, this.tick)),
         cells: this.cells.map(({q, r, food}) => ({q, r, food})),
         checkpoint: {
-          format: 1, globalSeed: Array.from(this.globalSeed), nextId: this.nextId,
+          format: usesTickLengths ? SC_TICK_LENGTH_CHECKPOINT_FORMAT : cycling ? SC_CHECKPOINT_FORMAT : 1,
+          scCycle: this.scCycle, scCycleStartTick: this.scCycleStartTick, pendingScCycle: this.pendingScCycle,
+          globalSeed: Array.from(this.globalSeed), nextId: this.nextId,
           pendingParameters: {...this.pendingParameters}, pendingGeneSwitches: {...this.pendingGeneSwitches},
           recentLifespans: this.recentLifespans.slice(), lifespanSum: this.lifespanSum, nextLifespanIndex: this.nextLifespanIndex,
         },
@@ -1052,7 +1211,8 @@ const Petri = (() => {
   return {
     VERSION,
     Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
-    SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, savedParameters, savedGeneSwitches, savedPlayback,
+    SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, savedSetup, savedParameters, savedGeneSwitches, savedPlayback,
+    SC_GENETIC_KEYS, DEFAULT_SC_CYCLE, scGeneticParameters, scCycleSettings, scCycleTiming, scCyclePulse, sausageProfile,
     Random, feedCell, foodIncome, mutateValue, sigmoid, dotProduct, chooseActivity, circumference,
   };
 })();

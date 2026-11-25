@@ -1,17 +1,25 @@
 "use strict";
 
 const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS,
-  DEFAULT_PAUSE_TICK, SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, sigmoid, dotProduct} = Petri;
+  DEFAULT_PAUSE_TICK, SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, sigmoid, dotProduct,
+  SC_GENETIC_KEYS, DEFAULT_SC_CYCLE, scGeneticParameters, scCycleSettings, scCycleTiming, scCyclePulse, sausageProfile} = Petri;
+const {PRESET_EXTENSIONS, createPreset, loadPreset, presetExtension, presetFilename} = PetriPreset;
+const PRESET_STORAGE_KEY = "petri-dish.presets";
 const HISTORY_BUFFER_SIZE = CHART_WINDOW + SUCCESS_RATE_AVERAGE_TICKS - 1;
 const ACTIVITY_DISPLAY_ORDER = [...new Set([
   "Reproduction", "Movement", "Growth", "Shrinking", "Excretion", ...ACTIVITIES,
 ])].map(name => ACTIVITIES.indexOf(name)).filter(index => index >= 0);
 const DEFAULT_MODEL_PARAMS = Object.fromEntries(
-  Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key)),
+  Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key) && !SC_GENETIC_KEYS.includes(key)),
 );
+const DEFAULT_CONSOLIDATION = scGeneticParameters(DEFAULT_PARAMS);
 const MODEL_PRESETS = {
   default: DEFAULT_MODEL_PARAMS,
   "scarce-food": {...DEFAULT_MODEL_PARAMS, foodMean: 1.5, foodSD: 8},
+};
+const SC_PHASE_NAMES = {
+  ready: "Ready", search: "Search", consolidation: "Consolidation",
+  "to-consolidation": "Transition to consolidation", "to-search": "Transition to search",
 };
 const STANDARD_DEVIATION_FILL = "#b9ce8239";
 const $ = id => document.getElementById(id);
@@ -55,14 +63,14 @@ const GROUPS = [
     ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
     ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
   ]],
-  ["Inheritance", false, [
-    ["mutationRate", "Numerical copying error (μw)", "%", 0, 20, 0.1, {scale: 100, max: 100}],
-    ["switchMutationRate", "Switch copying error (μs)", "%", 0, 5, 0.01, {scale: 100, max: 100}],
-    ["mutationWidth", "Peak width", "", 0, 1, 0.01],
-    ["mutationSharpness", "Edge sharpness", "", 0.1, 32, 0.1, {max: 1000}],
-    ["mutationTail", "Tail exponent", "", 1.01, 10, 0.01, {max: 1000}],
-    ["mutateParent", "Mutate original pattern", "toggle"],
-  ]],
+];
+
+const INHERITANCE_FIELDS = [
+  ["mutationRate", "Numerical copying error (μw)", "%", {min: 0, max: 100, scale: 100}],
+  ["switchMutationRate", "Switch copying error (μs)", "%", {min: 0, max: 100, scale: 100}],
+  ["mutationWidth", "Peak width", "", {min: 0, max: 1000000}],
+  ["mutationSharpness", "Edge sharpness", "", {min: 0.000001, max: 1000}],
+  ["mutationTail", "Tail exponent", "", {min: 1.000001, max: 1000}],
 ];
 
 const SETUP_KNOBS = [
@@ -87,8 +95,19 @@ let setupLocked = false;
 let failed = false;
 let checkpoint = false;
 let pauseAtTick = DEFAULT_PAUSE_TICK;
+let checkpointAudio;
+let checkpointAudioReady;
 let setup = {...DEFAULT_SETUP, startingGeneSwitches: {...DEFAULT_SETUP.startingGeneSwitches}};
+let setupAfterRestart = null;
 let params = {...DEFAULT_PARAMS};
+let scDraft = scDraftWithTicks(DEFAULT_SC_CYCLE, DEFAULT_PARAMS);
+let scLive = {scCycle: DEFAULT_SC_CYCLE, params: DEFAULT_PARAMS, scReading: null};
+const scInputs = [];
+const scOutputs = new Map();
+const savedPresets = [];
+let selectedPreset = null;
+const checkedPresets = new Set();
+let lastPresetRemoval = [];
 let snapshot = null;
 let latestSummary = null;
 let selectedBin = null;
@@ -115,6 +134,65 @@ function rangeFill(input) {
   const min = Number(input.min);
   const max = Number(input.max);
   input.style.setProperty("--fill", ((input.valueAsNumber - min) / (max - min) * 100 || 0) + "%");
+}
+
+function stepSecondDigit(value, direction, integral) {
+  const [mantissa, exponent] = value.toExponential().split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  const leadingPlace = Number(exponent);
+  const stepPlace = integral ? Math.max(0, leadingPlace - 1) : Math.max(-324, leadingPlace - 1);
+  const valuePlace = leadingPlace - fraction.length;
+  const commonPlace = Math.min(stepPlace, valuePlace);
+  // Add in decimal units so steps like 0.12 to 0.13 preserve the lower digits cleanly.
+  const digits = BigInt(whole + fraction) * 10n ** BigInt(valuePlace - commonPlace);
+  const step = BigInt(direction) * 10n ** BigInt(stepPlace - commonPlace);
+  return Number((digits + step) + "e" + commonPlace);
+}
+
+function mountNumberSteppers() {
+  for (const input of all('input[type="number"]')) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "number-stepper";
+    const buttons = document.createElement("div");
+    buttons.className = "number-stepper-buttons";
+    input.before(wrapper);
+    wrapper.append(input, buttons);
+
+    const fieldName = input.getAttribute("aria-label") || input.labels[0]?.textContent.trim() || "value";
+    const commit = () => input.dispatchEvent(new Event("change", {bubbles: true}));
+    const adjust = direction => {
+      if (input.matches(":disabled") || input.readOnly) return;
+      if (!Number.isFinite(input.valueAsNumber)) commit();
+      const current = input.valueAsNumber;
+      if (!Number.isFinite(current)) return;
+      const integral = input.step === "1";
+      const value = integral ? Math.round(current) : current;
+      const min = input.min === "" ? -Infinity : Number(input.min);
+      const max = input.max === "" ? Infinity : Number(input.max);
+      const next = Math.max(min, Math.min(max, stepSecondDigit(value, direction, integral)));
+      if (Number.isFinite(next)) {
+        input.valueAsNumber = next;
+        commit();
+      }
+    };
+    for (const [direction, symbol, verb] of [[1, "+", "Increase"], [-1, "−", "Decrease"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.tabIndex = -1;
+      button.textContent = symbol;
+      button.setAttribute("aria-label", verb + " " + fieldName);
+      button.addEventListener("mousedown", event => {
+        if (document.activeElement === input) event.preventDefault();
+      });
+      button.addEventListener("click", () => adjust(direction));
+      buttons.append(button);
+    }
+    input.addEventListener("keydown", event => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      adjust(event.key === "ArrowUp" ? 1 : -1);
+    });
+  }
 }
 
 function makeKnob(spec, values, kind) {
@@ -205,6 +283,16 @@ function normalizeSetup({keepStores = false} = {}) {
   if (setup.initialMass * 0.01 < 0.01) write("setup-minimum", exact(setup.initialMass * 0.01));
 }
 
+function syncSetupControls(options) {
+  for (const [key] of SETUP_KNOBS) controls.get(key).sync(setup[key]);
+  normalizeSetup(options);
+}
+
+function syncSetupLock() {
+  $("setup-fields").disabled = setupLocked || commandPending;
+  write("setup-state", setupAfterRestart ? "Preset on restart" : setupLocked ? "Locked until restart" : "New run");
+}
+
 function setParameter(key, value, kind) {
   if (kind !== "setup") {
     setLiveParameters({[key]: value});
@@ -224,9 +312,10 @@ function setParameter(key, value, kind) {
   normalizeSetup();
   if (key === "radius") chooseCenter();
   post("setup", {setup, watch});
+  syncPreset();
 }
 
-function setLiveParameters(values) {
+function setLiveParameters(values, consolidation) {
   const changes = {};
   for (const [key, value] of Object.entries(values)) {
     if (params[key] === value) continue;
@@ -234,21 +323,276 @@ function setLiveParameters(values) {
     controls.get(key).sync(value);
     changes[key] = value;
   }
-  if (!Object.keys(changes).length) return;
-  if (!setupLocked && ("energyCapacity" in changes || "wasteCapacity" in changes)) {
-    normalizeSetup();
-    post("tune", {values: changes, setup});
-  } else {
-    post("tune", {values: changes});
+  let scCycle;
+  if (consolidation && SC_GENETIC_KEYS.some(key => scDraft.consolidation[key] !== consolidation[key])) {
+    scDraft = scCycleSettings({consolidation}, scDraft);
+    scCycle = scDraft;
+    syncScControls();
   }
+  if (!Object.keys(changes).length && !scCycle) return;
+  const updatesSetup = !setupLocked && ("energyCapacity" in changes || "wasteCapacity" in changes);
+  if (updatesSetup) normalizeSetup();
+  post("tune", {values: changes, setup: updatesSetup ? setup : undefined, scCycle});
   syncPreset();
 }
 
+function sameSettings(current, expected) {
+  return Object.entries(expected).every(([key, value]) =>
+    typeof value === "object" ? sameSettings(current[key], value) : current[key] === value);
+}
+
+function currentPresetSettings() {
+  return {
+    setup: {...setup, ...setupAfterRestart},
+    params: {...params, ...scDraft.consolidation},
+    scCycle: scDraft,
+    playback: playbackSettings(),
+  };
+}
+
 function syncPreset() {
-  const selected = Object.keys(MODEL_PRESETS).find(name =>
+  const menu = $("model-preset");
+  if (selectedPreset) {
+    const index = savedPresets.indexOf(selectedPreset);
+    if (index === -1) {
+      menu.value = "";
+      return;
+    }
+    if (sameSettings(currentPresetSettings(), selectedPreset.settings)) {
+      menu.value = "saved-" + index;
+      return;
+    }
+  }
+  const usesDefaultInheritance = SC_GENETIC_KEYS.every(key => scDraft.consolidation[key] === DEFAULT_CONSOLIDATION[key]);
+  const selected = usesDefaultInheritance && Object.keys(MODEL_PRESETS).find(name =>
     Object.entries(MODEL_PRESETS[name]).every(([key, value]) => params[key] === value)
   );
-  $("model-preset").value = selected ?? "";
+  menu.value = selected || "";
+}
+
+function setPresetStatus(message, error = false) {
+  write("preset-status", message);
+  $("preset-status").classList.toggle("error", error);
+}
+
+function presetsByContents() {
+  return new Map(savedPresets.map(preset => [JSON.stringify(preset), preset]));
+}
+
+function addPresets(presets) {
+  const existing = presetsByContents();
+  return presets.map(preset => {
+    const contents = JSON.stringify(preset);
+    if (existing.has(contents)) return existing.get(contents);
+    savedPresets.push(preset);
+    existing.set(contents, preset);
+    return preset;
+  });
+}
+
+function renderSavedPresets() {
+  const group = $("saved-presets");
+  const names = new Set();
+  group.replaceChildren(...savedPresets.map(({name}, index) => {
+    let label = name;
+    let count = 1;
+    while (names.has(label)) label = name + " (" + ++count + ")";
+    names.add(label);
+    return new Option(label, "saved-" + index);
+  }));
+  group.hidden = savedPresets.length === 0;
+  syncPreset();
+  if ($("preset-manage-dialog").open) renderPresetManager();
+}
+
+function rememberPresets() {
+  try {
+    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(savedPresets));
+    return "";
+  } catch {
+    return " This change lasts for the current session.";
+  }
+}
+
+function renderPresetManager() {
+  const list = $("preset-manage-list");
+  const remove = $("preset-remove");
+  const rows = Array.from($("saved-presets").children, (option, index) => {
+    const preset = savedPresets[index];
+    const row = document.createElement("li");
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = checkedPresets.has(preset);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) checkedPresets.add(preset);
+      else checkedPresets.delete(preset);
+      remove.disabled = checkedPresets.size === 0;
+    });
+    const name = document.createElement("span");
+    name.textContent = option.label;
+    label.append(checkbox, name);
+    row.append(label);
+    return row;
+  });
+  list.replaceChildren(...rows);
+  list.hidden = rows.length === 0;
+  $("preset-manage-empty").hidden = rows.length > 0;
+  remove.hidden = list.hidden;
+  remove.disabled = checkedPresets.size === 0;
+  $("preset-undo").hidden = lastPresetRemoval.length === 0;
+}
+
+function removeCheckedPresets() {
+  if (!checkedPresets.size) return;
+  lastPresetRemoval = savedPresets.flatMap((preset, index) =>
+    checkedPresets.has(preset) ? [{preset, index}] : []);
+  for (const {index} of lastPresetRemoval.slice().reverse()) savedPresets.splice(index, 1);
+  checkedPresets.clear();
+  renderSavedPresets();
+  setPresetStatus(setupAfterRestart ? "Initial setup applies on restart." : "");
+  const count = lastPresetRemoval.length;
+  write("preset-manage-status", "Removed " + int.format(count) + (count === 1 ? " preset." : " presets.") + rememberPresets());
+  $("preset-undo").focus();
+}
+
+function undoPresetRemoval() {
+  if (!lastPresetRemoval.length) return;
+  const existing = presetsByContents();
+  for (const {preset, index} of lastPresetRemoval) {
+    const matching = existing.get(JSON.stringify(preset));
+    if (!matching) savedPresets.splice(index, 0, preset);
+    else if (selectedPreset === preset) selectedPreset = matching;
+  }
+  lastPresetRemoval = [];
+  renderSavedPresets();
+  write("preset-manage-status", "Removal undone." + rememberPresets());
+  $("preset-manage-done").focus();
+}
+
+async function importPresets(input) {
+  const files = Array.from(input.files).filter(file => presetExtension(file.name));
+  input.value = "";
+  if (!files.length) {
+    setPresetStatus("No " + PRESET_EXTENSIONS.join(" or ") + " files found.");
+    return;
+  }
+  setPresetStatus("Loading presets…");
+  const presets = [];
+  const invalid = [];
+  for (const file of files) {
+    try {
+      presets.push(loadPreset(JSON.parse(await file.text())));
+    } catch {
+      invalid.push(file.name);
+    }
+  }
+  const countBefore = savedPresets.length;
+  addPresets(presets);
+  const added = savedPresets.length - countBefore;
+  const duplicates = presets.length - added;
+  const messages = [];
+  if (added) {
+    renderSavedPresets();
+    messages.push("Loaded " + int.format(added) + (added === 1 ? " preset." : " presets.") + rememberPresets());
+  }
+  if (duplicates) messages.push(int.format(duplicates) + " already loaded.");
+  if (invalid.length) {
+    messages.push(invalid.length === 1
+      ? "Could not read “" + invalid[0] + "” as a preset."
+      : "Could not read " + int.format(invalid.length) + " preset files.");
+  }
+  setPresetStatus(messages.join(" "), invalid.length > 0);
+}
+
+function applySettingsPreset(preset) {
+  const {setup: {startingGeneSwitches, ...initial}, params: values, scCycle, playback} = preset.settings;
+  const useInitialNow = !setupLocked && !commandPending;
+  const radiusChanged = useInitialNow && setup.radius !== initial.radius;
+  const switchChanges = Object.fromEntries(Object.entries(startingGeneSwitches)
+    .filter(([key, value]) => setup.startingGeneSwitches[key] !== value));
+  setupAfterRestart = !useInitialNow && !sameSettings(setup, initial) ? initial : null;
+  if (useInitialNow) Object.assign(setup, initial);
+  Object.assign(setup.startingGeneSwitches, switchChanges);
+  params = {...values};
+  scDraft = scCycle;
+  for (const [key, value] of Object.entries(params)) controls.get(key)?.sync(value);
+  syncSetupControls({keepStores: !useInitialNow});
+  syncGeneTree();
+  syncScControls();
+  syncSetupLock();
+  if (radiusChanged) chooseCenter();
+  syncPlaybackControls(playback);
+  if (running) prepareCheckpointChime();
+  const resets = !useInitialNow && Object.keys(switchChanges).length
+    ? {geneSwitches: switchChanges, revision: ++geneRevision}
+    : {};
+  post("apply-preset", {params, scCycle, playback, setup: useInitialNow ? setup : undefined, watch, ...resets});
+  setPresetStatus(setupAfterRestart ? "Initial setup applies on restart." : "");
+}
+
+function mountPresets() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY) ?? "[]");
+    if (Array.isArray(stored)) {
+      const presets = stored.flatMap(data => {
+        try { return [loadPreset(data)]; } catch { return []; }
+      });
+      addPresets(presets);
+    }
+  } catch {
+    // File import and export also work when the browser blocks local storage.
+  }
+  renderSavedPresets();
+
+  const files = $("preset-files");
+  files.accept = PRESET_EXTENSIONS.join(",");
+  files.addEventListener("change", () => importPresets(files));
+  const saver = $("preset-save-dialog");
+  const manager = $("preset-manage-dialog");
+  const name = $("preset-name");
+  $("model-preset").addEventListener("change", event => {
+    const selection = event.target.value;
+    if (selection === "load-presets") {
+      syncPreset();
+      files.click();
+      return;
+    } else if (selection === "save-preset") {
+      name.value = "";
+      write("preset-save-error", "");
+      saver.showModal();
+    } else if (selection === "manage-presets") {
+      checkedPresets.clear();
+      if (!lastPresetRemoval.length) write("preset-manage-status", "");
+      renderPresetManager();
+      manager.showModal();
+    } else {
+      selectedPreset = selection.startsWith("saved-") ? savedPresets[Number(selection.slice(6))] : null;
+      if (selectedPreset) applySettingsPreset(selectedPreset);
+      else if (MODEL_PRESETS[selection]) {
+        setPresetStatus("");
+        setLiveParameters(MODEL_PRESETS[selection], DEFAULT_CONSOLIDATION);
+      }
+    }
+    syncPreset();
+  });
+  $("preset-remove").addEventListener("click", removeCheckedPresets);
+  $("preset-undo").addEventListener("click", undoPresetRemoval);
+  $("cancel-preset-save").addEventListener("click", () => saver.close());
+  $("preset-save-form").addEventListener("submit", event => {
+    event.preventDefault();
+    try {
+      const preset = createPreset(name.value, currentPresetSettings());
+      const blob = new Blob([JSON.stringify(preset, null, 2) + "\n"], {type: "application/json"});
+      download(blob, presetFilename(preset.name));
+      [selectedPreset] = addPresets([preset]);
+      renderSavedPresets();
+      setPresetStatus("Saved “" + preset.name + "”." + rememberPresets());
+      saver.close();
+    } catch (error) {
+      write("preset-save-error", error.message);
+    }
+  });
 }
 
 function syncGeneTree() {
@@ -321,6 +665,7 @@ function mountGeneNode(node, list, ancestors = []) {
     Object.assign(setup.startingGeneSwitches, values);
     syncGeneTree();
     post("gene-switches", {values, revision: ++geneRevision});
+    syncPreset();
   });
   return keys;
 }
@@ -339,12 +684,6 @@ function mountControls() {
     const content = document.createElement("div");
     content.className = "knobs";
     for (const knob of knobs) content.append(makeKnob(knob, params, "live"));
-    if (name === "Inheritance") {
-      const note = document.createElement("p");
-      note.className = "note";
-      note.textContent = "Switching OFF discards the weight. Switching ON draws a fresh weight uniformly from the founder range.";
-      content.append(note);
-    }
     detail.append(summary, content);
     $("runtime-controls").append(detail);
   }
@@ -490,16 +829,25 @@ function newRun() {
   runId++;
   resetRunView();
   setFileStatus("");
-  normalizeSetup();
+  if (setupAfterRestart) {
+    Object.assign(setup, setupAfterRestart);
+    setupAfterRestart = null;
+    syncSetupControls();
+    setPresetStatus("");
+  } else {
+    normalizeSetup();
+  }
   chooseCenter();
+  syncPreset();
   renderStatus("loading", 0);
-  post("reset", {setup, params, watch, speed: speedValue(), refresh: refreshValue(), pauseAtTick});
+  post("reset", {setup, params, scCycle: scDraft, watch, ...playbackSettings()});
 }
 
 function syncFileButtons() {
   $("import").disabled = !ready || fileBusy;
   $("export").disabled = !ready || fileBusy || failed;
   $("restart").disabled = !ready || fileBusy;
+  $("model-preset").disabled = !ready || fileBusy;
 }
 
 function setFileStatus(message, error = false) {
@@ -518,7 +866,7 @@ function renderStatus(reason, tick) {
   active.className = "status " + reason;
   write("run-status-text", {
     ready: "Ready", paused: "Paused", running: "Running",
-    checkpoint: "Checkpoint", error: "Stopped", loading: "Loading",
+    checkpoint: "Checkpoint at tick " + int.format(tick), error: "Stopped", loading: "Loading",
   }[reason]);
   const tickRate = $("run-tick-rate");
   tickRate.hidden = !running;
@@ -528,8 +876,7 @@ function renderStatus(reason, tick) {
   syncFileButtons();
   $("play").lastElementChild.textContent = running ? "Pause" : tick > 0 ? "Resume" : "Start";
   $("play").firstElementChild.className = "icon " + (running ? "icon-pause" : "icon-play");
-  $("setup-fields").disabled = setupLocked;
-  write("setup-state", setupLocked ? "Locked until restart" : "New run");
+  syncSetupLock();
   const notice = $("run-notice");
   notice.hidden = !checkpoint && !failed;
   notice.classList.toggle("error", failed);
@@ -538,15 +885,29 @@ function renderStatus(reason, tick) {
 
 function speedValue() { return SPEEDS[$("speed").valueAsNumber]; }
 function refreshValue() { return REFRESHES[$("refresh").valueAsNumber]; }
+function playbackSettings() { return {speed: speedValue(), refresh: refreshValue(), pauseAtTick}; }
 
-function updateTiming() {
+function renderTiming() {
   rangeFill($("speed"));
   rangeFill($("refresh"));
   write("speed-value", speedValue() ? int.format(speedValue()) + " ticks/s" : "Max");
   write("refresh-value", refreshValue() ? dec.format(refreshValue() / 1000) + " s" : "Every tick");
   $("speed").setAttribute("aria-valuetext", $("speed-value").textContent);
   $("refresh").setAttribute("aria-valuetext", $("refresh-value").textContent);
-  post("display", {speed: speedValue(), refresh: refreshValue()});
+}
+
+function updateTiming() {
+  renderTiming();
+  post("display", playbackSettings());
+  syncPreset();
+}
+
+function syncPlaybackControls(playback) {
+  $("speed").value = String(SPEEDS.indexOf(playback.speed));
+  $("refresh").value = String(REFRESHES.indexOf(playback.refresh));
+  pauseAtTick = playback.pauseAtTick;
+  $("pause-at-tick").value = String(pauseAtTick);
+  renderTiming();
 }
 
 function presentFrame(data) {
@@ -554,6 +915,8 @@ function presentFrame(data) {
   lastFrame = data.frame;
   snapshot = data.snapshot;
   latestSummary = data.summary;
+  scLive = {scCycle: data.scCycle, params: data.params, scReading: data.scReading};
+  renderScReadout();
   if (data.watchToken === watch.token) {
     inspector = snapshot.inspect;
     inspectedAt = snapshot.tick;
@@ -583,20 +946,20 @@ function showImportedRun(data) {
   runId = data.nextRunId;
   resetRunView();
   setup = data.setup;
+  setupAfterRestart = null;
+  selectedPreset = null;
+  setPresetStatus("");
   params = data.params;
+  scDraft = scDraftWithTicks(data.scCycle, params);
+  syncScControls();
   watch = data.watch;
   inspector = null;
   hoverCell = -1;
-  for (const [key] of SETUP_KNOBS) controls.get(key).sync(setup[key]);
-  for (const [key, value] of Object.entries(params)) controls.get(key).sync(value);
-  normalizeSetup({keepStores: data.tick > 0});
+  for (const [key, value] of Object.entries(params)) controls.get(key)?.sync(value);
+  syncSetupControls({keepStores: data.tick > 0});
   syncGeneTree();
+  syncPlaybackControls(data.playback);
   syncPreset();
-  $("speed").value = String(SPEEDS.indexOf(data.playback.speed));
-  $("refresh").value = String(REFRESHES.indexOf(data.playback.refresh));
-  pauseAtTick = data.playback.pauseAtTick;
-  $("pause-at-tick").value = String(pauseAtTick);
-  updateTiming();
   fileBusy = false;
   renderStatus("loading", data.tick);
   setFileStatus("Loaded tick " + int.format(data.tick) + ". " + (data.tick ? "Resume to continue." : "Press Start to begin.")
@@ -609,6 +972,7 @@ function receive({data}) {
     case "status":
       commandPending = false;
       renderStatus(data.reason, data.tick);
+      if (data.reason === "checkpoint") playCheckpointChime(data.runId);
       break;
     case "tick-rate":
       if (running) {
@@ -999,6 +1363,207 @@ function canvasContext(canvas) {
   return {ctx, width, height};
 }
 
+function drawScPlot(id, points, {labels, levels, color, marker}) {
+  const plot = canvasContext($(id));
+  if (!plot) return;
+  const {ctx, width, height} = plot;
+  ctx.font = "11px ui-monospace, monospace";
+  const left = Math.ceil(Math.max(...levels.map(([, label]) => ctx.measureText(label).width))) + 10;
+  const right = width - 9;
+  const top = 8;
+  const bottom = height - 20;
+  const x = portion => left + portion * (right - left);
+  const y = value => bottom - value * (bottom - top);
+  ctx.fillStyle = "#b1af9d";
+  ctx.strokeStyle = "#3a3e30";
+  ctx.lineWidth = 1;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "right";
+  for (const [value, label] of levels) {
+    const position = y(value);
+    ctx.fillText(label, left - 6, position);
+    ctx.beginPath();
+    ctx.moveTo(left, position);
+    ctx.lineTo(right, position);
+    ctx.stroke();
+  }
+  labels.forEach((label, i) => {
+    ctx.textAlign = ["left", "center", "right"][i];
+    ctx.fillText(label, x(i / 2), height - 7);
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  points.forEach(([offset, value], i) => {
+    if (i) ctx.lineTo(x(offset), y(value));
+    else ctx.moveTo(x(offset), y(value));
+  });
+  ctx.stroke();
+  if (marker) {
+    ctx.strokeStyle = "#edb76680";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x(marker[0]), top);
+    ctx.lineTo(x(marker[0]), bottom);
+    ctx.stroke();
+    ctx.fillStyle = "#edb766";
+    ctx.beginPath();
+    ctx.arc(x(marker[0]), y(marker[1]), 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
+
+function drawScProfiles() {
+  if (!$("sc-dialog").open) return;
+  const span = Math.min(Number.MAX_VALUE, 3 * Math.max(scDraft.search.mutationWidth, scDraft.consolidation.mutationWidth)) || 1;
+  const levels = [[1, "1"], [0.5, "0.5"], [0, "0"]];
+  const labels = [axisValue(-span), "0", axisValue(span)];
+  for (const [endpoint, color] of [["search", "#c9dc9d"], ["consolidation", "#edb766"]]) {
+    const values = scDraft[endpoint];
+    const points = Array.from({length: 161}, (_, index) => {
+      const fraction = index / 160;
+      return [fraction, sausageProfile(span * (2 * fraction - 1), values)];
+    });
+    drawScPlot("sc-" + endpoint + "-curve", points, {labels, levels, color});
+  }
+}
+
+function scDraftWithTicks(settings, modelParams) {
+  if (settings.searchLength !== undefined) return settings;
+  const {search, transition} = scCycleTiming(settings);
+  const transitionLength = Math.min(settings.period, Math.round(2 * transition));
+  return scCycleSettings({
+    searchLength: settings.enabled ? Math.min(settings.period - transitionLength, Math.round(search)) : 0,
+    transitionLength,
+    consolidation: settings.enabled ? settings.consolidation : scGeneticParameters(modelParams),
+  }, settings);
+}
+
+function drawScWave() {
+  if (!$("sc-dialog").open) return;
+  const {period} = scDraft;
+  const {search, transition} = scCycleTiming(scDraft);
+  let points;
+  if (transition === 0) {
+    const switchAt = search / period;
+    points = switchAt === 0 || switchAt === 1
+      ? [[0, switchAt], [1, switchAt]]
+      : [[0, 1], [switchAt, 1], [switchAt, 0], [1, 0], [1, 1]];
+  } else {
+    const boundaries = [0, search, search + transition, period - transition, period];
+    points = boundaries.slice(1).flatMap((end, i) => {
+      const start = boundaries[i];
+      return Array.from({length: 33}, (_, j) => {
+        const elapsed = j === 32 ? end : start + (end - start) * j / 32;
+        return [elapsed / period, 1 - scCyclePulse(scDraft, elapsed).consolidationWeight];
+      });
+    });
+  }
+  const phase = scLive.scReading;
+  const liveTiming = scCycleTiming(scLive.scCycle);
+  const sameTiming = scLive.scCycle.period === period && liveTiming.search === search && liveTiming.transition === transition;
+  const marker = phase && sameTiming ? [phase.elapsed / period, 1 - phase.consolidationWeight] : null;
+  const timeLabel = value => value >= 1e6 ? compact.format(value) : dec.format(value);
+  drawScPlot("sc-wave-curve", points, {
+    labels: ["0", timeLabel(period / 2), timeLabel(period)],
+    levels: [[1, "Search"], [0.5, ""], [0, "Consolidation"]],
+    color: "#c9dc9d", marker,
+  });
+}
+
+function renderScReadout() {
+  const {scCycle, scReading, params: applied} = scLive;
+  const phase = scReading?.phase ?? (scCycle.enabled ? "ready" : "consolidation");
+  const name = SC_PHASE_NAMES[phase];
+  const badge = $("sc-phase-badge");
+  badge.hidden = !scCycle.enabled;
+  if (scCycle.enabled && badge.dataset.phase !== phase) {
+    badge.dataset.phase = phase;
+    badge.textContent = "SC · " + name.replace("Transition to ", "To ");
+  }
+  if (!$("sc-dialog").open) return;
+  if ($("sc-phase").textContent !== name) write("sc-phase", name);
+  const effective = scReading?.parameters ?? applied;
+  for (const [key, {cell, unit, scale}] of scOutputs) {
+    cell.textContent = axisValue(effective[key] * scale) + unit;
+  }
+  drawScWave();
+}
+
+function syncScControls() {
+  for (const sync of scInputs) sync();
+  drawScProfiles();
+  renderScReadout();
+}
+
+function changeScSettings(changes) {
+  scDraft = scCycleSettings(changes, scDraft);
+  syncScControls();
+  syncPreset();
+  post("sc-cycle", {values: scDraft});
+}
+
+function mountScControls() {
+  const dialog = $("sc-dialog");
+  const bindNumber = (input, {min, max, scale = 1, step = "any"}, read, edit) => {
+    input.step = step;
+    const sync = () => {
+      input.min = typeof min === "function" ? min() : min;
+      input.max = typeof max === "function" ? max() : max;
+      input.value = String(Number((read() * scale).toPrecision(16)));
+    };
+    const commit = () => {
+      const value = input.valueAsNumber / scale;
+      if (Number.isFinite(value) && input.checkValidity() && value !== read()) edit(value);
+      sync();
+    };
+    input.addEventListener("change", commit);
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") commit();
+    });
+    scInputs.push(sync);
+  };
+  const durations = [
+    ["sc-period", "period", () => Math.max(1, scDraft.searchLength + scDraft.transitionLength), Number.MAX_SAFE_INTEGER],
+    ["sc-search-length", "searchLength", 0, () => scDraft.period - scDraft.transitionLength],
+    ["sc-transition-length", "transitionLength", 0, () => scDraft.period - scDraft.searchLength],
+  ];
+  for (const [id, key, min, max] of durations) {
+    bindNumber($(id), {min, max, step: "1"}, () => scDraft[key], value => changeScSettings({[key]: value}));
+  }
+  for (const [key, name, unit, options] of INHERITANCE_FIELDS) {
+    const row = $("sc-endpoint-fields").insertRow();
+    const header = document.createElement("th");
+    header.scope = "row";
+    header.textContent = name + (unit ? " (" + unit + ")" : "");
+    row.append(header);
+    const {scale = 1} = options;
+    for (const phase of ["Search", "Consolidation"]) {
+      const endpoint = phase.toLowerCase();
+      const input = document.createElement("input");
+      input.type = "number";
+      input.inputMode = "decimal";
+      input.setAttribute("aria-label", phase + " " + name + (unit ? " (" + unit + ")" : ""));
+      row.insertCell().append(input);
+      bindNumber(input, options, () => scDraft[endpoint][key], value => changeScSettings({[endpoint]: {[key]: value}}));
+    }
+    const cell = row.insertCell();
+    cell.className = "sc-value";
+    scOutputs.set(key, {cell, unit, scale});
+  }
+  $("inheritance-options").prepend(makeKnob(["mutateParent", "Mutate original pattern", "toggle"], params, "live"));
+  $("sc-open").addEventListener("click", () => {
+    dialog.showModal();
+    syncScControls();
+  });
+  new ResizeObserver(() => {
+    drawScProfiles();
+    drawScWave();
+  }).observe(dialog);
+  syncScControls();
+}
+
 function hexPath(ctx, x, y, radius) {
   const side = Math.sqrt(3) * radius / 2;
   ctx.beginPath();
@@ -1020,9 +1585,9 @@ function foodColor(score) {
 }
 
 function renderDish() {
-  const canvas = $("dish");
-  const context = canvasContext(canvas);
-  if (!context || !snapshot) return;
+  if (!snapshot) return;
+  const context = canvasContext($("dish"));
+  if (!context) return;
   const {ctx, width, height} = context;
   const cells = snapshot.cells;
   const radius = cells.at(-1).r;
@@ -1454,20 +2019,56 @@ function drawChart({ctx, width, height}, series, first, last, kind, resets) {
   ctx.restore();
 }
 
+function prepareCheckpointChime() {
+  if (!pauseAtTick) return;
+  const Context = window.AudioContext ?? window.webkitAudioContext;
+  if (!Context) return;
+  try {
+    checkpointAudio ??= new Context();
+    if (checkpointAudio.state !== "running") {
+      checkpointAudioReady = checkpointAudio.resume().catch(() => {});
+    }
+  } catch {
+    // Playback controls still work when audio is unavailable.
+  }
+}
+
+async function playCheckpointChime(reachedRunId) {
+  const audio = checkpointAudio;
+  if (!audio) return;
+  await checkpointAudioReady;
+  if (runId !== reachedRunId || !checkpoint || audio.state !== "running") return;
+
+  const start = audio.currentTime + 0.02;
+  for (const [index, frequency] of [293.66, 369.99, 440].entries()) {
+    const begins = start + index * 0.3;
+    const ends = begins + 2.15;
+    const peak = 0.055 / (1 + index * 0.25);
+    const tone = audio.createOscillator();
+    const volume = audio.createGain();
+    tone.frequency.value = frequency;
+    volume.gain.setValueAtTime(0, begins);
+    volume.gain.linearRampToValueAtTime(peak, begins + 0.1);
+    volume.gain.exponentialRampToValueAtTime(peak * 0.45, begins + 0.6);
+    volume.gain.linearRampToValueAtTime(0, ends);
+    tone.connect(volume).connect(audio.destination);
+    tone.start(begins);
+    tone.stop(ends);
+  }
+}
+
 function mountEvents() {
   $("speed").addEventListener("input", updateTiming);
   $("refresh").addEventListener("input", updateTiming);
-  $("model-preset").addEventListener("change", event => {
-    const preset = MODEL_PRESETS[event.target.value];
-    if (preset) setLiveParameters(preset);
-  });
   const pauseInput = $("pause-at-tick");
   pauseInput.value = String(pauseAtTick);
   const commitPauseTick = () => {
     const value = pauseInput.valueAsNumber;
     if (Number.isSafeInteger(value) && value >= 0 && value !== pauseAtTick) {
       pauseAtTick = value;
+      if (running) prepareCheckpointChime();
       post("pause-at-tick", {tick: pauseAtTick});
+      syncPreset();
     }
     pauseInput.value = String(pauseAtTick);
   };
@@ -1475,6 +2076,7 @@ function mountEvents() {
   pauseInput.addEventListener("blur", commitPauseTick);
   pauseInput.addEventListener("keydown", event => { if (event.key === "Enter") commitPauseTick(); });
   $("play").addEventListener("click", () => {
+    if (!running) prepareCheckpointChime();
     commandPending = true;
     $("play").disabled = true;
     $("step").disabled = true;
@@ -1482,6 +2084,7 @@ function mountEvents() {
     post(running ? "pause" : "start");
   });
   $("step").addEventListener("click", () => {
+    prepareCheckpointChime();
     commandPending = true;
     $("play").disabled = true;
     $("step").disabled = true;
@@ -1622,6 +2225,7 @@ function mountFavicon() {
 
 function launch() {
   mountControls();
+  mountScControls();
   const embedded = $("worker-source");
   if (embedded) {
     const source = new Blob([$("model-source").textContent, "\n", embedded.textContent], {type: "text/javascript"});
@@ -1640,7 +2244,9 @@ function launch() {
     $("import").disabled = true;
   });
   mountEvents();
-  updateTiming();
+  mountPresets();
+  mountNumberSteppers();
+  renderTiming();
   newRun();
 }
 

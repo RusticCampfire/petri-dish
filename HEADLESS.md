@@ -39,6 +39,12 @@ console.log({tick, population, biomass: mass});
 
 An ES module can use the kit with `import model from "./model.js"`, then `const {Simulation} = model`. If you move just the source into a package with `"type": "module"`, name the file `model.cjs` and import it using that filename.
 
+## Search–Consolidation Cycle
+
+Pass `scCycle: {period: 2500, searchLength: 675, transitionLength: 250}` to `new Simulation()` to configure the cycle in ticks. Transition length covers both directions, and consolidation fills the rest of the period. A search length of zero uses the consolidation parameters throughout. Set the five copying parameters in `search` and `consolidation`. Existing proportion-based options and checkpoints still work.
+
+`dish.queueScCycle(changes)` applies edits at the next tick boundary. An enabled cycle begins at its first active tick and each active history row reports its phase and effective genetic settings in `scCycle`. A checkpoint retains its settings, position and queued edits.
+
 ## Build the website from the repository
 
 Run `node build.cjs` for the static site in `dist/`. For a stable GitHub Pages release, run `node build.cjs --pages` and include the generated `docs/` files in the release commit. Both builds serve the readable model at `./model.js` and include the Node.js kit and the self-contained offline page.

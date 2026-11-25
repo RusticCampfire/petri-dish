@@ -48,7 +48,17 @@
             <option value="" disabled hidden>Custom</option>
             <option value="default" selected>Default</option>
             <option value="scarce-food">Scarce food, high deviation</option>
+            <optgroup id="saved-presets" label="Saved presets" hidden></optgroup>
+            <hr>
+            <option value="load-presets">Load Presets</option>
+            <option value="save-preset">Save Current Settings</option>
+            <option value="manage-presets">Manage Presets…</option>
           </select>
+          <input id="preset-files" type="file" multiple hidden>
+          <p id="preset-status" class="preset-status" role="status"></p>
+        </div>
+        <div class="sc-settings-entry">
+          <button type="button" id="sc-open" class="button" aria-haspopup="dialog" aria-controls="sc-dialog">Inheritance settings</button>
         </div>
         <div class="parameter-group gene-controls"><ul id="gene-tree" class="gene-tree" aria-label="Starting gene switches"></ul></div>
         <div id="runtime-controls"></div>
@@ -74,7 +84,10 @@
             <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
             <div><h1>Petri Dish Evolution Simulator <span class="dish-version">v%%VERSION%%</span></h1><p id="dish-caption">91 hexes · Radius 5</p></div>
           </div>
-          <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
+          <div class="dish-readouts">
+            <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
+            <span id="sc-phase-badge" class="sc-phase-badge" role="status" title="SC Cycle phase" hidden></span>
+          </div>
         </div>
         <div class="viewport">
           <canvas id="dish" tabindex="0" aria-label="Hex dish. Click a hex or use the arrow keys to inspect it."></canvas>
@@ -214,6 +227,80 @@
       </details>
     </aside>
   </main>
+  <dialog id="preset-save-dialog" class="panel preset-dialog" aria-labelledby="preset-save-title">
+    <h2 id="preset-save-title">Save Current Settings</h2>
+    <form id="preset-save-form" method="dialog">
+      <label for="preset-name">Preset name</label>
+      <input id="preset-name" type="text" maxlength="80" required autofocus>
+      <p id="preset-save-error" class="preset-status error" role="status"></p>
+      <div class="preset-dialog-actions">
+        <button type="button" id="cancel-preset-save" class="button">Cancel</button>
+        <button type="submit" class="button primary">Save preset</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="preset-manage-dialog" class="panel preset-dialog" aria-labelledby="preset-manage-title">
+    <h2 id="preset-manage-title">Manage Presets</h2>
+    <ul id="preset-manage-list" class="preset-manage-list" aria-label="Presets saved in this browser"></ul>
+    <p id="preset-manage-empty" class="preset-status" hidden>No saved presets.</p>
+    <p id="preset-manage-status" class="preset-status" role="status"></p>
+    <form method="dialog" class="preset-dialog-actions">
+      <button type="button" id="preset-remove" class="button" disabled>Remove selected</button>
+      <button type="button" id="preset-undo" class="button" hidden>Undo</button>
+      <button type="submit" id="preset-manage-done" class="button" autofocus>Done</button>
+    </form>
+  </dialog>
+  <dialog id="sc-dialog" class="panel sc-dialog" aria-labelledby="sc-title">
+    <header class="sc-header">
+      <h2 id="sc-title">Inheritance settings</h2>
+      <form method="dialog"><button type="submit" class="button" autofocus>Close</button></form>
+    </header>
+    <div class="sc-layout">
+      <section class="sc-controls" aria-label="Cycle timing and inheritance controls">
+        <div class="sc-pulse">
+          <div class="sc-pulse-field">
+            <label for="sc-period">Cycle period <small>ticks</small></label>
+            <input id="sc-period" type="number" inputmode="numeric">
+          </div>
+          <div class="sc-pulse-field">
+            <label for="sc-search-length">Search length <small>ticks</small></label>
+            <input id="sc-search-length" type="number" inputmode="numeric" aria-describedby="sc-timing-help">
+          </div>
+          <div class="sc-pulse-field">
+            <label for="sc-transition-length">Transition length <small>ticks</small></label>
+            <input id="sc-transition-length" type="number" inputmode="numeric" aria-describedby="sc-timing-help">
+          </div>
+        </div>
+        <p id="sc-timing-help" class="sc-help">Transition length covers both directions. Set Search length to 0 to use consolidation throughout.</p>
+        <div class="sc-readout"><span>Current phase</span><strong id="sc-phase" role="status">Consolidation</strong></div>
+        <table class="sc-endpoints">
+          <colgroup><col class="sc-parameter"><col class="sc-search"><col class="sc-consolidation"><col class="sc-effective"></colgroup>
+          <thead><tr><th scope="col">Inheritance</th><th scope="col">Search</th><th scope="col">Consolidation</th><th scope="col">Effective</th></tr></thead>
+          <tbody id="sc-endpoint-fields"></tbody>
+        </table>
+        <div id="inheritance-options">
+          <p class="sc-help">Switching OFF discards the weight. Switching ON draws a fresh weight uniformly from the founder range.</p>
+        </div>
+      </section>
+      <section class="sc-plots" aria-label="SC Cycle plots">
+        <figure class="sc-plot">
+          <figcaption class="sc-search-title">Search sausage function</figcaption>
+          <canvas id="sc-search-curve" role="img" aria-label="Search mutation density, normalized to its peak"></canvas>
+          <p class="sc-axis">Relative change (δ)</p>
+        </figure>
+        <figure class="sc-plot">
+          <figcaption class="sc-consolidation-title">Consolidation sausage function</figcaption>
+          <canvas id="sc-consolidation-curve" role="img" aria-label="Consolidation mutation density, normalized to its peak"></canvas>
+          <p class="sc-axis">Relative change (δ)</p>
+        </figure>
+        <figure class="sc-plot sc-wave">
+          <figcaption>SC Cycle oscillation</figcaption>
+          <canvas id="sc-wave-curve" role="img" aria-label="Search and consolidation over one SC Cycle"></canvas>
+          <p class="sc-axis">Ticks into the cycle</p>
+        </figure>
+      </section>
+    </div>
+  </dialog>
   <footer class="page-actions">
 %%DOWNLOADS%%
     <button id="import" class="button" type="button" disabled>Import run</button>

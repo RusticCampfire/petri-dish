@@ -49,7 +49,7 @@ function publish({debug = false, replaceHistory = false} = {}) {
   postMessage({
     type: "frame", runId, frame, debug, replaceHistory, records, snapshot, earlierExclusions, priorActivityStats,
     watchToken: watch.token, params: simulation.params, minimumMass: simulation.minMass,
-    summary: simulation.history.at(-1),
+    summary: simulation.history.at(-1), scCycle: simulation.scCycle, scReading: simulation.scReading,
   });
 }
 
@@ -96,12 +96,26 @@ function advance() {
   return false;
 }
 
-function previewFounders(setup, params) {
-  const preview = new Simulation({setup, params, seed: simulation.globalSeed});
-  preview.pendingParameters = simulation.pendingParameters;
-  preview.pendingGeneSwitches = simulation.pendingGeneSwitches;
+function previewFounders(setup, params, scCycle) {
+  const preview = new Simulation({setup, params, seed: simulation.globalSeed, scCycle: scCycle ?? simulation.scCycle});
+  if (scCycle === undefined) {
+    preview.pendingParameters = simulation.pendingParameters;
+    preview.pendingGeneSwitches = simulation.pendingGeneSwitches;
+    preview.pendingScCycle = simulation.pendingScCycle;
+  }
   simulation = preview;
   publish({replaceHistory: true});
+}
+
+function setDisplay(settings) {
+  ({speed, refresh} = settings);
+  if (!running) return;
+  clearTimeout(timer);
+  timer = null;
+  if (refresh > 0) waitingForFrame = 0;
+  nextTick = performance.now();
+  lastFrame = nextTick;
+  schedule(0);
 }
 
 function reportFailure(error) {
@@ -170,6 +184,7 @@ async function importRun(data) {
     type: "imported", runId: data.runId, nextRunId: runId, tick: simulation.tick, watch, playback,
     setup: {...simulation.setup, startingGeneSwitches: {...simulation.appliedGeneSwitches, ...simulation.pendingGeneSwitches}},
     params: {...simulation.params, ...simulation.pendingParameters},
+    scCycle: simulation.pendingScCycle ?? simulation.scCycle,
     legacy: !saved.checkpoint,
   });
   publish({replaceHistory: true});
@@ -202,7 +217,7 @@ self.onmessage = ({data}) => {
       watch = data.watch;
       speed = data.speed;
       refresh = data.refresh;
-      simulation = new Simulation({setup: data.setup, params: data.params});
+      simulation = new Simulation({setup: data.setup, params: data.params, scCycle: data.scCycle});
       publish({replaceHistory: true});
       status("ready");
       return;
@@ -216,6 +231,7 @@ self.onmessage = ({data}) => {
         }
         break;
       case "tune":
+        if (data.scCycle && !failure) simulation.queueScCycle(data.scCycle);
         if (!running && !simulation.tick && !failure) {
           previewFounders(data.setup ?? simulation.setup, {...simulation.params, ...data.values});
         } else {
@@ -232,17 +248,28 @@ self.onmessage = ({data}) => {
           geneRevision = data.revision;
         }
         break;
-      case "display":
-        speed = data.speed;
-        refresh = data.refresh;
-        if (running) {
-          clearTimeout(timer);
-          timer = null;
-          if (refresh > 0) waitingForFrame = 0;
-          nextTick = performance.now();
-          lastFrame = nextTick;
-          schedule(0);
+      case "sc-cycle":
+        if (!failure) simulation.queueScCycle(data.values);
+        break;
+      case "apply-preset":
+        pauseAtTick = data.playback.pauseAtTick;
+        setDisplay(data.playback);
+        if (failure) break;
+        if (!running && !simulation.tick && data.setup) {
+          watch = data.watch;
+          geneRevision = null;
+          previewFounders(data.setup, data.params, data.scCycle);
+        } else {
+          simulation.queueParameters(data.params);
+          simulation.queueScCycle(data.scCycle);
+          if (data.geneSwitches) {
+            simulation.queueGeneSwitches(data.geneSwitches);
+            geneRevision = data.revision;
+          }
         }
+        break;
+      case "display":
+        setDisplay(data);
         break;
       case "pause-at-tick":
         pauseAtTick = data.tick;

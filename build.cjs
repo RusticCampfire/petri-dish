@@ -20,11 +20,12 @@ function writePage(filename, scripts, downloads = "") {
 }
 
 fs.mkdirSync(output, {recursive: true});
-for (const file of ["model.js", "run-file.js", "worker.js", "app.js"]) {
+for (const file of ["model.js", "run-file.js", "worker.js", "preset-file.js", "app.js"]) {
   fs.copyFileSync(path.join(source, file), path.join(output, file));
 }
 
 writePage("index.html", `<script src="./model.js"></script>
+  <script src="./preset-file.js"></script>
   <script src="./app.js"></script>`, `    <nav class="downloads" aria-label="Simulator downloads">
       <a href="./model.js" download>Model source</a>
       <a href="./petri-dish-node.tar.gz" download>Node.js kit</a>
@@ -34,6 +35,7 @@ writePage("index.html", `<script src="./model.js"></script>
 // Keep the downloadable HTML self-contained, using the very same sources.
 writePage("petri-dish.html", `<script id="model-source">${read("model.js")}</script>
   <script type="text/plain" id="worker-source">${read("run-file.js")}\n${read("worker.js")}</script>
+  <script>${read("preset-file.js")}</script>
   <script>${read("app.js")}</script>`);
 
 execFileSync("tar", ["-czf", path.join(output, "petri-dish-node.tar.gz"),

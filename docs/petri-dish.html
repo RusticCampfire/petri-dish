@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#151611">
-  <meta name="application-version" content="0.4.1">
+  <meta name="application-version" content="0.5">
   <meta name="description" content="Observe a population evolve in a finite hexagonal dish.">
   <title>Petri Dish Evolution Simulator</title>
   <link id="favicon" rel="icon" type="image/png" sizes="64x64">
@@ -116,7 +116,8 @@ h2 { font-size: 15px; line-height: 1.25; letter-spacing: -.016em; font-weight: 6
 .label-line output { font: 11px var(--mono); color: var(--accent-bright); text-align: right; white-space: nowrap; }
 .pause-setting { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
 .pause-setting small { display: block; color: var(--soft); font-size: 10px; }
-.pause-setting input { width: 80px; height: 27px; padding: 0 6px; text-align: right; font: 12px var(--mono); }
+.pause-setting .number-stepper { flex: 0 0 min(99px, 50%); }
+.pause-setting input { height: 27px; padding: 0 6px; text-align: right; font: 12px var(--mono); }
 .refresh-label { margin-top: 13px; }
 input[type=range] {
   --fill: 0%;
@@ -139,6 +140,11 @@ input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 1px sol
 .preset-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--line); }
 .preset-row label { font-size: 12px; font-weight: 620; }
 .preset-row select { width: 100%; min-width: 0; }
+.preset-status { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+.preset-status:empty { display: none; }
+.preset-status.error { color: var(--danger); }
+.sc-settings-entry { padding: 0 14px 9px; }
+.sc-settings-entry .button { width: 100%; justify-content: flex-start; padding: 0 10px; }
 .live { display: inline-flex; align-items: center; gap: 5px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .055em; }
 .live i { width: 6px; height: 6px; }
 .parameter-group { border-top: 1px solid var(--line); }
@@ -186,7 +192,7 @@ summary:hover { background: #ffffff06; }
 .knobs { padding: 0 13px 12px; }
 .knob {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(46px, 63px);
+  grid-template-columns: minmax(0, 1fr) minmax(65px, 82px);
   grid-template-rows: auto 15px;
   gap: 1px 7px;
   align-items: center;
@@ -198,8 +204,25 @@ summary:hover { background: #ffffff06; }
 .knob input[type=range] { grid-column: 1 / -1; margin: 0; }
 input[type=number], select { min-width: 0; border: 1px solid #424436; border-radius: 5px; background: #181a14; color: var(--ink); }
 .knob input[type=number] { width: 100%; height: 25px; padding: 0 5px; text-align: right; font: 11px var(--mono); }
-.knob input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.knob input[type=number] { appearance: textfield; }
+.number-stepper { display: grid; grid-template-columns: minmax(0, 1fr) 19px; min-width: 0; }
+.number-stepper input[type=number] { width: 100%; appearance: textfield; border-radius: 5px 0 0 5px; }
+.number-stepper input::-webkit-inner-spin-button, .number-stepper input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.number-stepper-buttons { display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.number-stepper-buttons button {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid #424436;
+  border-left: 0;
+  background: #26281f;
+  color: var(--muted);
+  font: 12px/1 var(--mono);
+}
+.number-stepper-buttons button:first-child { border-radius: 0 5px 0 0; }
+.number-stepper-buttons button:last-child { border-top: 0; border-radius: 0 0 5px 0; }
+.number-stepper-buttons button:not(:disabled):hover { background: #373a2b; color: var(--accent-bright); }
+.number-stepper:focus-within { position: relative; z-index: 1; }
 .knob-check { display: flex; gap: 7px; align-items: center; font-size: 11px; margin: 9px 0 5px; }
 .knob-check input { margin: 0; accent-color: var(--accent); }
 fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
@@ -211,13 +234,21 @@ fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
 .metric > span { color: var(--muted); display: block; font-size: 11px; line-height: 1.4; }
 .metric strong { display: block; font: 590 clamp(16px, 1.55vw, 24px)/1.25 var(--mono); margin: 3px 0 1px; letter-spacing: -.053em; overflow-wrap: anywhere; }
 .metric small { display: block; font-size: 10px; color: var(--soft); }
+#m-lifespan-detail { min-height: 2lh; }
 .mint { color: var(--mint); }
 
 .dish-panel, .history-panel { overflow: hidden; }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 15px 12px; }
 .section-head p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.dish-readouts { display: grid; justify-items: end; gap: 5px; flex-shrink: 0; }
+.dish-readouts:has(.sc-phase-badge:not([hidden])) { min-width: 11.2rem; }
 .tick-readout { display: flex; align-items: center; flex-shrink: 0; gap: 7px; padding: 4px 8px; border: 1px solid #3a3d2d; border-radius: 5px; background: #191b14; font-size: 10px; color: var(--muted); }
 .tick-readout strong { color: var(--accent-bright); font: 12px var(--mono); }
+.sc-phase-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid #3a3d2d; border-radius: 5px; background: #191b14; color: var(--muted); font-size: .86rem; font-weight: 600; white-space: nowrap; }
+.sc-phase-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.sc-phase-badge[data-phase=search] { color: var(--mint); }
+.sc-phase-badge[data-phase=consolidation] { color: var(--accent-bright); }
+.sc-phase-badge[data-phase^="to-"] { color: var(--purple); }
 .viewport {
   position: relative;
   margin: 0 9px;
@@ -359,6 +390,97 @@ select { padding: 4px 6px; font-size: 11px; }
 .sigmoid-estimate strong { color: var(--accent-bright); font-family: var(--mono); }
 .sigmoid-figure .note { padding: 0; }
 
+.sc-dialog {
+  width: min(1120px, calc(100% - 28px));
+  max-height: calc(100dvh - 28px);
+  padding: 0;
+  color: var(--ink);
+  box-shadow: 0 18px 70px #0008;
+  overscroll-behavior: contain;
+}
+.sc-dialog::backdrop, .preset-dialog::backdrop { background: #0b0c09bd; }
+.preset-dialog { width: min(400px, calc(100% - 28px)); color: var(--ink); padding: 18px; }
+.preset-dialog h2 { font-size: 1.2rem; margin-bottom: 10px; }
+.preset-dialog input[type=text] {
+  display: block;
+  width: 100%;
+  margin: 5px 0 0;
+  padding: 7px 8px;
+  border: 1px solid #4a4a39;
+  border-radius: 5px;
+  background: #181a14;
+  color: var(--ink);
+}
+.preset-dialog .preset-status.error { color: var(--danger); margin-top: 6px; }
+.preset-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.preset-dialog-actions .primary { flex: 0 0 auto; }
+.preset-manage-list {
+  list-style: none;
+  max-height: min(50dvh, 24rem);
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #181a14;
+}
+.preset-manage-list li + li { border-top: 1px solid var(--line); }
+.preset-manage-list label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.preset-manage-list input { flex: none; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.preset-manage-list label:hover { background: #ffffff06; }
+#preset-manage-status { margin-top: 8px; }
+#preset-remove:not(:disabled) { color: var(--danger); }
+.sc-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.sc-header h2 { font-size: 1.2rem; }
+.sc-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 18px; padding: 16px 18px 18px; }
+.sc-controls { display: grid; align-content: start; gap: 13px; min-width: 0; }
+.sc-pulse { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sc-pulse-field { display: grid; grid-template-rows: 1fr auto; gap: 4px; min-width: 0; }
+.sc-pulse label { align-self: end; font-size: .9rem; }
+.sc-pulse small { display: block; color: var(--muted); font-size: .8rem; }
+.sc-help { color: var(--muted); font-size: .82rem; }
+#inheritance-options .knob-check { min-height: 32px; font-size: .9rem; }
+.sc-controls input[type=number] { width: 100%; min-height: 34px; padding: 4px 6px; text-align: right; font: .93rem var(--mono); }
+.sc-readout { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; color: var(--muted); }
+.sc-readout strong { color: var(--mint); }
+.sc-endpoints { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .86rem; }
+.sc-parameter { width: 34%; }
+.sc-search, .sc-effective { width: 19%; }
+.sc-consolidation { width: 28%; }
+.sc-endpoints th, .sc-endpoints td { padding: 5px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+.sc-endpoints th:first-child { text-align: left; padding-left: 0; }
+.sc-endpoints thead { color: var(--muted); }
+.sc-endpoints thead th { overflow-wrap: anywhere; }
+.sc-endpoints .sc-value { color: var(--mint); font: .88rem var(--mono); overflow-wrap: anywhere; }
+.sc-plots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 9px; }
+.sc-plot { margin: 0; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #181b14; min-width: 0; }
+.sc-plot figcaption { font-weight: 650; margin-bottom: 5px; }
+.sc-search-title { color: var(--mint); }
+.sc-consolidation-title { color: var(--accent-bright); }
+.sc-plot canvas { display: block; width: 100%; height: 126px; }
+.sc-wave { grid-column: 1 / -1; }
+.sc-wave canvas { height: 149px; }
+.sc-axis { color: var(--muted); font-size: .85rem; text-align: center; }
+
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .noscript { max-width: 400px; margin: auto; padding: 20px; }
 
@@ -371,6 +493,7 @@ select { padding: 4px 6px; font-size: 11px; }
   .page-actions { padding: 0 12px 20px; }
   .left-rail { display: contents; }
   .playback { grid-row: 1; }
+  .run-notice:not(.error) { display: none; }
   .center { grid-row: 2; }
   .parameters { grid-row: 3; }
   .right-rail { grid-column: 1; gap: 12px; }
@@ -381,10 +504,17 @@ select { padding: 4px 6px; font-size: 11px; }
   .refresh-label { margin-top: 0; }
   .viewport { height: clamp(265px, 67vw, 420px); }
 }
+@media (max-width: 870px) {
+  .sc-layout { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 520px) {
   .metric-grid { gap: 6px; grid-template-columns: repeat(6, minmax(0,1fr)); }
   .metric { grid-column: span 2; }
   .metric:nth-last-child(-n+2) { grid-column: span 3; }
+  .dish-panel > .section-head { flex-wrap: wrap; }
+  .dish-readouts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-left: auto; }
+  .sc-layout, .sc-header { padding-left: 10px; padding-right: 10px; }
+  .sc-plots { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color .14s, border-color .14s; }
@@ -429,7 +559,17 @@ select { padding: 4px 6px; font-size: 11px; }
             <option value="" disabled hidden>Custom</option>
             <option value="default" selected>Default</option>
             <option value="scarce-food">Scarce food, high deviation</option>
+            <optgroup id="saved-presets" label="Saved presets" hidden></optgroup>
+            <hr>
+            <option value="load-presets">Load Presets</option>
+            <option value="save-preset">Save Current Settings</option>
+            <option value="manage-presets">Manage Presets…</option>
           </select>
+          <input id="preset-files" type="file" multiple hidden>
+          <p id="preset-status" class="preset-status" role="status"></p>
+        </div>
+        <div class="sc-settings-entry">
+          <button type="button" id="sc-open" class="button" aria-haspopup="dialog" aria-controls="sc-dialog">Inheritance settings</button>
         </div>
         <div class="parameter-group gene-controls"><ul id="gene-tree" class="gene-tree" aria-label="Starting gene switches"></ul></div>
         <div id="runtime-controls"></div>
@@ -453,9 +593,12 @@ select { padding: 4px 6px; font-size: 11px; }
         <div class="section-head">
           <div class="dish-brand">
             <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <div><h1>Petri Dish Evolution Simulator <span class="dish-version">v0.4.1</span></h1><p id="dish-caption">91 hexes · Radius 5</p></div>
+            <div><h1>Petri Dish Evolution Simulator <span class="dish-version">v0.5</span></h1><p id="dish-caption">91 hexes · Radius 5</p></div>
           </div>
-          <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
+          <div class="dish-readouts">
+            <div class="tick-readout"><span>Tick</span><strong id="tick">0000</strong></div>
+            <span id="sc-phase-badge" class="sc-phase-badge" role="status" title="SC Cycle phase" hidden></span>
+          </div>
         </div>
         <div class="viewport">
           <canvas id="dish" tabindex="0" aria-label="Hex dish. Click a hex or use the arrow keys to inspect it."></canvas>
@@ -595,6 +738,80 @@ select { padding: 4px 6px; font-size: 11px; }
       </details>
     </aside>
   </main>
+  <dialog id="preset-save-dialog" class="panel preset-dialog" aria-labelledby="preset-save-title">
+    <h2 id="preset-save-title">Save Current Settings</h2>
+    <form id="preset-save-form" method="dialog">
+      <label for="preset-name">Preset name</label>
+      <input id="preset-name" type="text" maxlength="80" required autofocus>
+      <p id="preset-save-error" class="preset-status error" role="status"></p>
+      <div class="preset-dialog-actions">
+        <button type="button" id="cancel-preset-save" class="button">Cancel</button>
+        <button type="submit" class="button primary">Save preset</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="preset-manage-dialog" class="panel preset-dialog" aria-labelledby="preset-manage-title">
+    <h2 id="preset-manage-title">Manage Presets</h2>
+    <ul id="preset-manage-list" class="preset-manage-list" aria-label="Presets saved in this browser"></ul>
+    <p id="preset-manage-empty" class="preset-status" hidden>No saved presets.</p>
+    <p id="preset-manage-status" class="preset-status" role="status"></p>
+    <form method="dialog" class="preset-dialog-actions">
+      <button type="button" id="preset-remove" class="button" disabled>Remove selected</button>
+      <button type="button" id="preset-undo" class="button" hidden>Undo</button>
+      <button type="submit" id="preset-manage-done" class="button" autofocus>Done</button>
+    </form>
+  </dialog>
+  <dialog id="sc-dialog" class="panel sc-dialog" aria-labelledby="sc-title">
+    <header class="sc-header">
+      <h2 id="sc-title">Inheritance settings</h2>
+      <form method="dialog"><button type="submit" class="button" autofocus>Close</button></form>
+    </header>
+    <div class="sc-layout">
+      <section class="sc-controls" aria-label="Cycle timing and inheritance controls">
+        <div class="sc-pulse">
+          <div class="sc-pulse-field">
+            <label for="sc-period">Cycle period <small>ticks</small></label>
+            <input id="sc-period" type="number" inputmode="numeric">
+          </div>
+          <div class="sc-pulse-field">
+            <label for="sc-search-length">Search length <small>ticks</small></label>
+            <input id="sc-search-length" type="number" inputmode="numeric" aria-describedby="sc-timing-help">
+          </div>
+          <div class="sc-pulse-field">
+            <label for="sc-transition-length">Transition length <small>ticks</small></label>
+            <input id="sc-transition-length" type="number" inputmode="numeric" aria-describedby="sc-timing-help">
+          </div>
+        </div>
+        <p id="sc-timing-help" class="sc-help">Transition length covers both directions. Set Search length to 0 to use consolidation throughout.</p>
+        <div class="sc-readout"><span>Current phase</span><strong id="sc-phase" role="status">Consolidation</strong></div>
+        <table class="sc-endpoints">
+          <colgroup><col class="sc-parameter"><col class="sc-search"><col class="sc-consolidation"><col class="sc-effective"></colgroup>
+          <thead><tr><th scope="col">Inheritance</th><th scope="col">Search</th><th scope="col">Consolidation</th><th scope="col">Effective</th></tr></thead>
+          <tbody id="sc-endpoint-fields"></tbody>
+        </table>
+        <div id="inheritance-options">
+          <p class="sc-help">Switching OFF discards the weight. Switching ON draws a fresh weight uniformly from the founder range.</p>
+        </div>
+      </section>
+      <section class="sc-plots" aria-label="SC Cycle plots">
+        <figure class="sc-plot">
+          <figcaption class="sc-search-title">Search sausage function</figcaption>
+          <canvas id="sc-search-curve" role="img" aria-label="Search mutation density, normalized to its peak"></canvas>
+          <p class="sc-axis">Relative change (δ)</p>
+        </figure>
+        <figure class="sc-plot">
+          <figcaption class="sc-consolidation-title">Consolidation sausage function</figcaption>
+          <canvas id="sc-consolidation-curve" role="img" aria-label="Consolidation mutation density, normalized to its peak"></canvas>
+          <p class="sc-axis">Relative change (δ)</p>
+        </figure>
+        <figure class="sc-plot sc-wave">
+          <figcaption>SC Cycle oscillation</figcaption>
+          <canvas id="sc-wave-curve" role="img" aria-label="Search and consolidation over one SC Cycle"></canvas>
+          <p class="sc-axis">Ticks into the cycle</p>
+        </figure>
+      </section>
+    </div>
+  </dialog>
   <footer class="page-actions">
 
     <button id="import" class="button" type="button" disabled>Import run</button>
@@ -608,7 +825,7 @@ select { padding: 4px 6px; font-size: 11px; }
 // Petri Dish's simulation engine. In Node.js, require("./model.js") exposes
 // the same Simulation class used by the browser worker. One step is one tick.
 const Petri = (() => {
-  const VERSION = "0.4.1";
+  const VERSION = "0.5";
   const ACTIVITY_NAMES = {
     excretionEnabled: "Excretion", growthEnabled: "Growth", shrinkingEnabled: "Shrinking",
     movementEnabled: "Movement", reproductionEnabled: "Reproduction",
@@ -649,6 +866,20 @@ const Petri = (() => {
     mutationSharpness: 16, mutationTail: 3, mutateParent: false,
     ...Object.fromEntries(ACTIVITY_ENABLED_KEYS.map(key => [key, true])),
   });
+  const SC_GENETIC_KEYS = Object.freeze([
+    "mutationRate", "switchMutationRate", "mutationWidth", "mutationSharpness", "mutationTail",
+  ]);
+  const DEFAULT_SC_CYCLE = Object.freeze({
+    enabled: false, period: 2500, searchProportion: 0.30, transitionProportion: 0.10,
+    search: Object.freeze({
+      mutationRate: 0.32, switchMutationRate: 0, mutationWidth: 1, mutationSharpness: 1, mutationTail: 1.5,
+    }),
+    consolidation: Object.freeze({
+      mutationRate: 0.01, switchMutationRate: 0, mutationWidth: 0.15, mutationSharpness: 16, mutationTail: 4,
+    }),
+  });
+  const SC_CHECKPOINT_FORMAT = 3;
+  const SC_TICK_LENGTH_CHECKPOINT_FORMAT = 4;
   const DEFAULT_PAUSE_TICK = 0;
   const SPEEDS = [1, 5, 10, 25, 50, 100, 250, 0];
   const REFRESHES = [0, 100, 500, 1000, 2000, 5000, 10000];
@@ -742,6 +973,15 @@ const Petri = (() => {
         : sign * Math.sign(value) * Math.exp(Math.log(Math.abs(value)) + logMagnitude);
       if (Number.isFinite(candidate)) return candidate;
     }
+  }
+
+  function sausageProfile(delta, {mutationWidth, mutationSharpness, mutationTail}) {
+    if (delta === 0) return 1;
+    if (mutationWidth === 0) return 0;
+    // Evaluate the sampling density relative to its peak in log space.
+    const power = mutationSharpness * (Math.log(Math.abs(delta)) - Math.log(mutationWidth));
+    const logBase = Math.max(0, power) + Math.log1p(Math.exp(-Math.abs(power)));
+    return Math.exp((-mutationTail / mutationSharpness) * logBase);
   }
 
   function sigmoid(logit, rareOdds = Math.exp(-Math.abs(logit))) {
@@ -937,8 +1177,109 @@ const Petri = (() => {
     return params;
   }
 
+  function scEndpoint(changes, base) {
+    if (!isRecord(changes) || Object.keys(changes).some(key => !SC_GENETIC_KEYS.includes(key))) {
+      throw new TypeError("SC Cycle endpoints can only set the five inheritance parameters.");
+    }
+    return Object.freeze({...base, ...savedParameters(changes)});
+  }
+
+  function scGeneticParameters(values) {
+    return Object.fromEntries(SC_GENETIC_KEYS.filter(key => Object.hasOwn(values, key)).map(key => [key, values[key]]));
+  }
+
+  function scCycleSettings(changes = {}, base = DEFAULT_SC_CYCLE) {
+    if (!isRecord(changes)) throw new TypeError("Invalid SC Cycle settings.");
+    const {period, searchLength = 0, transitionLength = 0, enabled, searchProportion, transitionProportion}
+      = {...base, ...changes};
+    if (!isCount(period) || period === 0) throw new RangeError("The SC Cycle requires a positive whole-tick period.");
+    const endpoints = {
+      search: scEndpoint(changes.search === undefined ? {} : changes.search, base.search),
+      consolidation: scEndpoint(changes.consolidation === undefined ? {} : changes.consolidation, base.consolidation),
+    };
+    if (base.searchLength !== undefined || Object.hasOwn(changes, "searchLength") || Object.hasOwn(changes, "transitionLength")) {
+      if (!isCount(searchLength) || !isCount(transitionLength) || searchLength > period - transitionLength) {
+        throw new RangeError("Search and transition lengths must be whole ticks and fit within the period.");
+      }
+      return Object.freeze({enabled: searchLength > 0, period, searchLength, transitionLength, ...endpoints});
+    }
+    // Keep proportion-based settings readable for existing checkpoints and Node callers.
+    if (typeof enabled !== "boolean" || !inRange(searchProportion, 0, 1) || !inRange(transitionProportion, 0, 1)) {
+      throw new RangeError("The SC Cycle requires an enabled flag and proportions between 0 and 1.");
+    }
+    return Object.freeze({enabled, period, searchProportion, transitionProportion, ...endpoints});
+  }
+
+  function scCycleTiming({period, searchLength, transitionLength, searchProportion, transitionProportion}) {
+    if (searchLength !== undefined) {
+      const transition = searchLength > 0 ? transitionLength / 2 : 0;
+      return {search: searchLength, transition, consolidation: period - searchLength - 2 * transition};
+    }
+    const transition = period * transitionProportion / 2;
+    const stable = period - 2 * transition;
+    const search = stable * searchProportion;
+    return {search, transition, consolidation: stable - search};
+  }
+
+  function smoothstep(progress) {
+    return progress * progress * (3 - 2 * progress);
+  }
+
+  function scCyclePulse(settings, elapsed) {
+    const {search, transition} = scCycleTiming(settings);
+    const offset = elapsed % settings.period;
+    const consolidationStart = search + transition;
+    const returnStart = settings.period - transition;
+    if (offset < search) return {phase: "search", consolidationWeight: 0};
+    if (offset < consolidationStart) {
+      return {phase: "to-consolidation", consolidationWeight: smoothstep((offset - search) / transition)};
+    }
+    if (offset < returnStart) return {phase: "consolidation", consolidationWeight: 1};
+    return {phase: "to-search", consolidationWeight: 1 - smoothstep((offset - returnStart) / transition)};
+  }
+
+  function scCycleReading(settings, tick, start) {
+    if (!settings.enabled || tick < start) return null;
+    const elapsed = (tick - start) % settings.period;
+    const {phase, consolidationWeight} = scCyclePulse(settings, elapsed);
+    const parameters = {};
+    for (const key of SC_GENETIC_KEYS) {
+      const from = settings.search[key];
+      const to = settings.consolidation[key];
+      parameters[key] = consolidationWeight === 1 ? to : from + (to - from) * consolidationWeight;
+    }
+    return {phase, consolidationWeight, elapsed, parameters};
+  }
+
+  function migrateSeasoning(settings, params) {
+    if (!isRecord(settings)) throw new Error("The checkpoint is missing its seasoning settings.");
+    const endpoint = values => Object.fromEntries(SC_GENETIC_KEYS.map(key => [key, values?.[key] ?? params[key]]));
+    return {
+      enabled: true, period: settings.period,
+      searchProportion: settings.searchProportion, transitionProportion: settings.transitionProportion,
+      search: endpoint(settings.search), consolidation: endpoint(settings.consolidation),
+    };
+  }
+
   function savedGeneSwitches(values) {
     return savedOptions(values, DEFAULT_SETUP.startingGeneSwitches, "gene switches");
+  }
+
+  function savedSetup(values, {legacyDefaults = false} = {}) {
+    const {startingGeneSwitches = {}, ...settings} = savedOptions(values, DEFAULT_SETUP, "initial setup");
+    const switches = savedGeneSwitches(startingGeneSwitches);
+    const setup = {
+      ...DEFAULT_SETUP, weightRange: legacyDefaults ? 0.01 : DEFAULT_SETUP.weightRange, ...settings,
+      startingGeneSwitches: Object.fromEntries(CONNECTIONS.map(({key}) =>
+        [key, switches[key] ?? (legacyDefaults || DEFAULT_SETUP.startingGeneSwitches[key])])),
+    };
+    if (!isCount(setup.radius) || setup.radius > 30
+      || !isCount(setup.founders) || setup.founders > 1 + 3 * setup.radius * (setup.radius + 1)
+      || setup.initialMass <= 0 || setup.biasLow > setup.biasHigh
+      || [setup.initialEnergy, setup.initialWaste, setup.initialFood, setup.weightRange].some(value => value < 0)) {
+      throw new Error("The initial setup is out of range.");
+    }
+    return setup;
   }
 
   function savedPlayback(playback) {
@@ -1020,8 +1361,13 @@ const Petri = (() => {
   }
 
   class Simulation {
-    constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed} = {}) {
+    constructor({setup = {}, params = {}, entropy = target => globalThis.crypto.getRandomValues(target), seed, scCycle} = {}) {
+      this.scCycle = scCycle === undefined ? DEFAULT_SC_CYCLE : scCycleSettings(scCycle);
       this.params = {...DEFAULT_PARAMS, ...params};
+      if (this.scCycle.searchLength !== undefined) Object.assign(this.params, this.scCycle.consolidation);
+      this.scCycleStartTick = this.scCycle.enabled ? 1 : null;
+      this.scReading = null;
+      this.pendingScCycle = null;
       this.setup = {...DEFAULT_SETUP, ...setup};
       this.setup.startingGeneSwitches = {...DEFAULT_SETUP.startingGeneSwitches, ...setup.startingGeneSwitches};
       this.appliedGeneSwitches = {...this.setup.startingGeneSwitches};
@@ -1054,8 +1400,13 @@ const Petri = (() => {
     static fromResults(data, {entropy} = {}) {
       if (data?.model !== "Petri Dish") throw new Error("Choose a Petri Dish results file.");
       const checkpoint = data.checkpoint;
-      if (checkpoint === undefined ? !["0.3", "0.3-dev", "0.4"].includes(data.version) : checkpoint?.format !== 1) {
-        throw new Error("This version of the run file is unsupported.");
+      const format = checkpoint?.format;
+      const supported = checkpoint === undefined
+        ? ["0.3", "0.3-dev", "0.4"].includes(data.version)
+        : [1, 2, SC_CHECKPOINT_FORMAT, SC_TICK_LENGTH_CHECKPOINT_FORMAT].includes(format);
+      if (!supported) throw new Error("This version of the run file is unsupported.");
+      if (format >= SC_CHECKPOINT_FORMAT && !isRecord(checkpoint.scCycle)) {
+        throw new Error("The checkpoint is missing its SC Cycle settings.");
       }
       if (!isCount(data.tick) || !inRange(data.minimumMass) || data.minimumMass <= 0
         || !isList(data.activityOrder, ACTIVITIES.length, (name, i) => name === ACTIVITIES[i])
@@ -1063,18 +1414,7 @@ const Petri = (() => {
         throw new Error("The run file has invalid model data.");
       }
       // Preserve the previous defaults for older files that omit settings.
-      const {startingGeneSwitches = {}, ...savedSetup} = savedOptions(data.setup, DEFAULT_SETUP, "initial setup");
-      const switches = savedGeneSwitches(startingGeneSwitches);
-      const setup = {
-        ...DEFAULT_SETUP, weightRange: 0.01, ...savedSetup,
-        startingGeneSwitches: Object.fromEntries(CONNECTIONS.map(({key}) => [key, switches[key] ?? true])),
-      };
-      if (!isCount(setup.radius) || setup.radius > 30
-        || !isCount(setup.founders) || setup.founders > 1 + 3 * setup.radius * (setup.radius + 1)
-        || setup.initialMass <= 0 || setup.biasLow > setup.biasHigh
-        || [setup.initialEnergy, setup.initialWaste, setup.initialFood, setup.weightRange].some(value => value < 0)) {
-        throw new Error("The run file has an invalid initial setup.");
-      }
+      const setup = savedSetup(data.setup, {legacyDefaults: true});
       const defaults = {...DEFAULT_PARAMS, suddenDeath: 0.002, switchMutationRate: 0.001, failedAttemptFraction: 0};
       const params = {...defaults, ...savedParameters(data.appliedParameters)};
       const initialParams = {...defaults, ...savedParameters(data.initialParameters)};
@@ -1103,6 +1443,7 @@ const Petri = (() => {
       }
       const simulation = new Simulation({
         setup: {...setup, founders: 0, initialFood: 0}, params, seed: checkpoint?.globalSeed, entropy,
+        scCycle: format === 2 ? migrateSeasoning(checkpoint.seasoning, params) : checkpoint?.scCycle,
       });
       if (!isList(data.cells, simulation.cells.length, (cell, i) =>
         cell?.q === simulation.cells[i].q && cell.r === simulation.cells[i].r && inRange(cell.food))) {
@@ -1116,6 +1457,15 @@ const Petri = (() => {
       });
       simulation.queueParameters(checkpoint?.pendingParameters ?? {});
       simulation.queueGeneSwitches(checkpoint?.pendingGeneSwitches ?? {});
+      if (checkpoint?.pendingScCycle != null) simulation.queueScCycle(checkpoint.pendingScCycle);
+      if (simulation.scCycle.enabled) {
+        const start = format === 2 ? 1 : checkpoint.scCycleStartTick;
+        if (!isCount(start) || start === 0 || start > Math.max(1, simulation.tick)) {
+          throw new Error("The checkpoint has an invalid SC Cycle start tick.");
+        }
+        simulation.scCycleStartTick = start;
+        simulation.scReading = scCycleReading(simulation.scCycle, simulation.tick, start);
+      }
       for (const key of Object.keys(simulation.totals)) simulation.totals[key] = last.totals[key];
       for (const key of Object.keys(simulation.stats)) simulation.stats[key] = last[key];
       simulation.entities = restoreEntities(data.entities, simulation);
@@ -1180,11 +1530,20 @@ const Petri = (() => {
     queueParameters(changes) {
       const values = savedParameters(changes);
       if (Object.keys(values).length) this.pendingParameters = {...this.pendingParameters, ...values};
+      const cycle = this.pendingScCycle ?? this.scCycle;
+      if (cycle.searchLength !== undefined) {
+        const consolidation = scGeneticParameters(values);
+        if (Object.keys(consolidation).length) this.queueScCycle({consolidation});
+      }
     }
 
     queueGeneSwitches(changes) {
       const values = savedGeneSwitches(changes);
       if (Object.keys(values).length) this.pendingGeneSwitches = {...this.pendingGeneSwitches, ...values};
+    }
+
+    queueScCycle(changes) {
+      this.pendingScCycle = scCycleSettings(changes, this.pendingScCycle ?? this.scCycle);
     }
 
     applyParameters(changes) {
@@ -1230,8 +1589,12 @@ const Petri = (() => {
     }
 
     step(geneSwitchResets) {
-      if (this.pendingParameters) {
-        this.applyParameters(this.pendingParameters);
+      const nextCycle = this.pendingScCycle;
+      const changes = nextCycle?.searchLength === undefined
+        ? this.pendingParameters
+        : {...this.pendingParameters, ...nextCycle.consolidation};
+      if (changes) {
+        this.applyParameters(changes);
         this.pendingParameters = null;
       }
       if (this.pendingGeneSwitches) {
@@ -1239,6 +1602,13 @@ const Petri = (() => {
         this.pendingGeneSwitches = null;
       }
       this.tick++;
+      if (nextCycle) {
+        if (!nextCycle.enabled) this.scCycleStartTick = null;
+        else if (!this.scCycle.enabled) this.scCycleStartTick = this.tick;
+        this.scCycle = nextCycle;
+        this.pendingScCycle = null;
+      }
+      this.scReading = scCycleReading(this.scCycle, this.tick, this.scCycleStartTick);
       this.entropy(this.tickSalt);
       this.random.reseed(this.globalSeed, this.tickSalt);
       this.stats = tickStats();
@@ -1457,7 +1827,8 @@ const Petri = (() => {
 
     inherit(original) {
       const genes = original.slice();
-      const {mutationRate, mutationWidth, switchMutationRate} = this.params;
+      const mutation = this.scReading?.parameters ?? this.params;
+      const {mutationRate, mutationWidth, switchMutationRate} = mutation;
       const mutateNumbers = mutationRate > 0 && mutationWidth > 0;
       if (!mutateNumbers && switchMutationRate === 0) return genes;
       for (let activity = 0; activity < ACTIVITIES.length; activity++) {
@@ -1470,7 +1841,7 @@ const Petri = (() => {
             continue;
           }
           if (genes[i] === null || !mutateNumbers || this.random.unit() >= mutationRate) continue;
-          const mutated = mutateValue(genes[i], this.params, this.random);
+          const mutated = mutateValue(genes[i], mutation, this.random);
           if (mutated !== genes[i]) this.stats.mutations++;
           genes[i] = mutated;
         }
@@ -1592,6 +1963,7 @@ const Petri = (() => {
         energyCapacity, wasteCapacity,
         peakPopulation: this.peakPopulation, totals: {...this.totals}, ...this.stats,
       };
+      if (this.scReading) result.scCycle = this.scReading;
       this.history.push(result);
       return result;
     }
@@ -1617,6 +1989,8 @@ const Petri = (() => {
 
     exportResults() {
       const enabled = this.enabledActivities();
+      const usesTickLengths = this.scCycle.searchLength !== undefined || this.pendingScCycle?.searchLength !== undefined;
+      const cycling = this.scCycle.enabled || this.pendingScCycle?.enabled;
       return {
         model: "Petri Dish", version: VERSION, tick: this.tick, minimumMass: this.minMass,
         setup: this.setup, initialParameters: this.initialParams, appliedParameters: {...this.params},
@@ -1646,7 +2020,9 @@ const Petri = (() => {
         history: this.history, entities: this.entities.map(entity => entityState(entity, enabled, this.tick)),
         cells: this.cells.map(({q, r, food}) => ({q, r, food})),
         checkpoint: {
-          format: 1, globalSeed: Array.from(this.globalSeed), nextId: this.nextId,
+          format: usesTickLengths ? SC_TICK_LENGTH_CHECKPOINT_FORMAT : cycling ? SC_CHECKPOINT_FORMAT : 1,
+          scCycle: this.scCycle, scCycleStartTick: this.scCycleStartTick, pendingScCycle: this.pendingScCycle,
+          globalSeed: Array.from(this.globalSeed), nextId: this.nextId,
           pendingParameters: {...this.pendingParameters}, pendingGeneSwitches: {...this.pendingGeneSwitches},
           recentLifespans: this.recentLifespans.slice(), lifespanSum: this.lifespanSum, nextLifespanIndex: this.nextLifespanIndex,
         },
@@ -1657,7 +2033,8 @@ const Petri = (() => {
   return {
     VERSION,
     Simulation, ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS, DEFAULT_PAUSE_TICK,
-    SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, savedParameters, savedGeneSwitches, savedPlayback,
+    SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, savedSetup, savedParameters, savedGeneSwitches, savedPlayback,
+    SC_GENETIC_KEYS, DEFAULT_SC_CYCLE, scGeneticParameters, scCycleSettings, scCycleTiming, scCyclePulse, sausageProfile,
     Random, feedCell, foodIncome, mutateValue, sigmoid, dotProduct, chooseActivity, circumference,
   };
 })();
@@ -1903,7 +2280,7 @@ function publish({debug = false, replaceHistory = false} = {}) {
   postMessage({
     type: "frame", runId, frame, debug, replaceHistory, records, snapshot, earlierExclusions, priorActivityStats,
     watchToken: watch.token, params: simulation.params, minimumMass: simulation.minMass,
-    summary: simulation.history.at(-1),
+    summary: simulation.history.at(-1), scCycle: simulation.scCycle, scReading: simulation.scReading,
   });
 }
 
@@ -1950,12 +2327,26 @@ function advance() {
   return false;
 }
 
-function previewFounders(setup, params) {
-  const preview = new Simulation({setup, params, seed: simulation.globalSeed});
-  preview.pendingParameters = simulation.pendingParameters;
-  preview.pendingGeneSwitches = simulation.pendingGeneSwitches;
+function previewFounders(setup, params, scCycle) {
+  const preview = new Simulation({setup, params, seed: simulation.globalSeed, scCycle: scCycle ?? simulation.scCycle});
+  if (scCycle === undefined) {
+    preview.pendingParameters = simulation.pendingParameters;
+    preview.pendingGeneSwitches = simulation.pendingGeneSwitches;
+    preview.pendingScCycle = simulation.pendingScCycle;
+  }
   simulation = preview;
   publish({replaceHistory: true});
+}
+
+function setDisplay(settings) {
+  ({speed, refresh} = settings);
+  if (!running) return;
+  clearTimeout(timer);
+  timer = null;
+  if (refresh > 0) waitingForFrame = 0;
+  nextTick = performance.now();
+  lastFrame = nextTick;
+  schedule(0);
 }
 
 function reportFailure(error) {
@@ -2024,6 +2415,7 @@ async function importRun(data) {
     type: "imported", runId: data.runId, nextRunId: runId, tick: simulation.tick, watch, playback,
     setup: {...simulation.setup, startingGeneSwitches: {...simulation.appliedGeneSwitches, ...simulation.pendingGeneSwitches}},
     params: {...simulation.params, ...simulation.pendingParameters},
+    scCycle: simulation.pendingScCycle ?? simulation.scCycle,
     legacy: !saved.checkpoint,
   });
   publish({replaceHistory: true});
@@ -2056,7 +2448,7 @@ self.onmessage = ({data}) => {
       watch = data.watch;
       speed = data.speed;
       refresh = data.refresh;
-      simulation = new Simulation({setup: data.setup, params: data.params});
+      simulation = new Simulation({setup: data.setup, params: data.params, scCycle: data.scCycle});
       publish({replaceHistory: true});
       status("ready");
       return;
@@ -2070,6 +2462,7 @@ self.onmessage = ({data}) => {
         }
         break;
       case "tune":
+        if (data.scCycle && !failure) simulation.queueScCycle(data.scCycle);
         if (!running && !simulation.tick && !failure) {
           previewFounders(data.setup ?? simulation.setup, {...simulation.params, ...data.values});
         } else {
@@ -2086,17 +2479,28 @@ self.onmessage = ({data}) => {
           geneRevision = data.revision;
         }
         break;
-      case "display":
-        speed = data.speed;
-        refresh = data.refresh;
-        if (running) {
-          clearTimeout(timer);
-          timer = null;
-          if (refresh > 0) waitingForFrame = 0;
-          nextTick = performance.now();
-          lastFrame = nextTick;
-          schedule(0);
+      case "sc-cycle":
+        if (!failure) simulation.queueScCycle(data.values);
+        break;
+      case "apply-preset":
+        pauseAtTick = data.playback.pauseAtTick;
+        setDisplay(data.playback);
+        if (failure) break;
+        if (!running && !simulation.tick && data.setup) {
+          watch = data.watch;
+          geneRevision = null;
+          previewFounders(data.setup, data.params, data.scCycle);
+        } else {
+          simulation.queueParameters(data.params);
+          simulation.queueScCycle(data.scCycle);
+          if (data.geneSwitches) {
+            simulation.queueGeneSwitches(data.geneSwitches);
+            geneRevision = data.revision;
+          }
         }
+        break;
+      case "display":
+        setDisplay(data);
         break;
       case "pause-at-tick":
         pauseAtTick = data.tick;
@@ -2147,18 +2551,78 @@ self.onmessage = ({data}) => {
 </script>
   <script>"use strict";
 
+const PetriPreset = (() => {
+  const {DEFAULT_PARAMS, savedSetup, savedParameters, savedPlayback, scCycleSettings} =
+    typeof module === "object" && module.exports ? require("./model.js") : Petri;
+  const PRESET_EXTENSION = ".evoset";
+  const PRESET_EXTENSIONS = Object.freeze([PRESET_EXTENSION, ".petripreset"]);
+  const FORMAT = "petri-dish-preset";
+  const VERSION = 1;
+
+  function createPreset(name, settings) {
+    name = typeof name === "string" ? name.trim() : "";
+    if (!name || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) {
+      throw new Error("Enter a preset name of 1 to 80 characters.");
+    }
+    const setup = savedSetup(settings?.setup);
+    const params = savedParameters(settings.params);
+    const playback = savedPlayback(settings.playback);
+    const scCycle = scCycleSettings(settings.scCycle);
+    if (!playback || scCycle.searchLength === undefined) {
+      throw new Error("The preset is missing playback or SC Cycle settings.");
+    }
+    return {
+      format: FORMAT, version: VERSION, name,
+      settings: {setup, params: {...DEFAULT_PARAMS, ...params, ...scCycle.consolidation}, scCycle, playback},
+    };
+  }
+
+  function loadPreset(data) {
+    if (data?.format !== FORMAT || data.version !== VERSION) {
+      throw new Error("This file is not a supported Petri Dish preset.");
+    }
+    return createPreset(data.name, data.settings);
+  }
+
+  function presetExtension(name) {
+    const filename = name.toLowerCase();
+    return PRESET_EXTENSIONS.find(extension => filename.endsWith(extension));
+  }
+
+  function presetFilename(name) {
+    const base = name.replace(/[<>:"/\\|?*]/g, "-").replace(/[. ]+$/, "");
+    const extension = presetExtension(base);
+    const stem = extension ? base.slice(0, -extension.length).replace(/[. ]+$/, "") : base;
+    return (stem || "settings") + PRESET_EXTENSION;
+  }
+
+  return {PRESET_EXTENSION, PRESET_EXTENSIONS, createPreset, loadPreset, presetExtension, presetFilename};
+})();
+
+if (typeof module === "object" && module.exports) module.exports = PetriPreset;
+</script>
+  <script>"use strict";
+
 const {ACTIVITIES, ACTIVITY_ENABLED_KEYS, COEFFICIENTS, GENE_TREE, DEFAULT_SETUP, DEFAULT_PARAMS,
-  DEFAULT_PAUSE_TICK, SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, sigmoid, dotProduct} = Petri;
+  DEFAULT_PAUSE_TICK, SPEEDS, REFRESHES, CHART_WINDOW, SUCCESS_RATE_AVERAGE_TICKS, sigmoid, dotProduct,
+  SC_GENETIC_KEYS, DEFAULT_SC_CYCLE, scGeneticParameters, scCycleSettings, scCycleTiming, scCyclePulse, sausageProfile} = Petri;
+const {PRESET_EXTENSIONS, createPreset, loadPreset, presetExtension, presetFilename} = PetriPreset;
+const PRESET_STORAGE_KEY = "petri-dish.presets";
 const HISTORY_BUFFER_SIZE = CHART_WINDOW + SUCCESS_RATE_AVERAGE_TICKS - 1;
 const ACTIVITY_DISPLAY_ORDER = [...new Set([
   "Reproduction", "Movement", "Growth", "Shrinking", "Excretion", ...ACTIVITIES,
 ])].map(name => ACTIVITIES.indexOf(name)).filter(index => index >= 0);
 const DEFAULT_MODEL_PARAMS = Object.fromEntries(
-  Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key)),
+  Object.entries(DEFAULT_PARAMS).filter(([key]) => !ACTIVITY_ENABLED_KEYS.includes(key) && !SC_GENETIC_KEYS.includes(key)),
 );
+const DEFAULT_CONSOLIDATION = scGeneticParameters(DEFAULT_PARAMS);
 const MODEL_PRESETS = {
   default: DEFAULT_MODEL_PARAMS,
   "scarce-food": {...DEFAULT_MODEL_PARAMS, foodMean: 1.5, foodSD: 8},
+};
+const SC_PHASE_NAMES = {
+  ready: "Ready", search: "Search", consolidation: "Consolidation",
+  "to-consolidation": "Transition to consolidation", "to-search": "Transition to search",
 };
 const STANDARD_DEVIATION_FILL = "#b9ce8239";
 const $ = id => document.getElementById(id);
@@ -2202,14 +2666,14 @@ const GROUPS = [
     ["excretionRate", "Excretion rate", "W/S", 0, 4, 0.05],
     ["excretionCost", "Excretion cost", "E/W", 0, 0.5, 0.005],
   ]],
-  ["Inheritance", false, [
-    ["mutationRate", "Numerical copying error (μw)", "%", 0, 20, 0.1, {scale: 100, max: 100}],
-    ["switchMutationRate", "Switch copying error (μs)", "%", 0, 5, 0.01, {scale: 100, max: 100}],
-    ["mutationWidth", "Peak width", "", 0, 1, 0.01],
-    ["mutationSharpness", "Edge sharpness", "", 0.1, 32, 0.1, {max: 1000}],
-    ["mutationTail", "Tail exponent", "", 1.01, 10, 0.01, {max: 1000}],
-    ["mutateParent", "Mutate original pattern", "toggle"],
-  ]],
+];
+
+const INHERITANCE_FIELDS = [
+  ["mutationRate", "Numerical copying error (μw)", "%", {min: 0, max: 100, scale: 100}],
+  ["switchMutationRate", "Switch copying error (μs)", "%", {min: 0, max: 100, scale: 100}],
+  ["mutationWidth", "Peak width", "", {min: 0, max: 1000000}],
+  ["mutationSharpness", "Edge sharpness", "", {min: 0.000001, max: 1000}],
+  ["mutationTail", "Tail exponent", "", {min: 1.000001, max: 1000}],
 ];
 
 const SETUP_KNOBS = [
@@ -2234,8 +2698,19 @@ let setupLocked = false;
 let failed = false;
 let checkpoint = false;
 let pauseAtTick = DEFAULT_PAUSE_TICK;
+let checkpointAudio;
+let checkpointAudioReady;
 let setup = {...DEFAULT_SETUP, startingGeneSwitches: {...DEFAULT_SETUP.startingGeneSwitches}};
+let setupAfterRestart = null;
 let params = {...DEFAULT_PARAMS};
+let scDraft = scDraftWithTicks(DEFAULT_SC_CYCLE, DEFAULT_PARAMS);
+let scLive = {scCycle: DEFAULT_SC_CYCLE, params: DEFAULT_PARAMS, scReading: null};
+const scInputs = [];
+const scOutputs = new Map();
+const savedPresets = [];
+let selectedPreset = null;
+const checkedPresets = new Set();
+let lastPresetRemoval = [];
 let snapshot = null;
 let latestSummary = null;
 let selectedBin = null;
@@ -2262,6 +2737,65 @@ function rangeFill(input) {
   const min = Number(input.min);
   const max = Number(input.max);
   input.style.setProperty("--fill", ((input.valueAsNumber - min) / (max - min) * 100 || 0) + "%");
+}
+
+function stepSecondDigit(value, direction, integral) {
+  const [mantissa, exponent] = value.toExponential().split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  const leadingPlace = Number(exponent);
+  const stepPlace = integral ? Math.max(0, leadingPlace - 1) : Math.max(-324, leadingPlace - 1);
+  const valuePlace = leadingPlace - fraction.length;
+  const commonPlace = Math.min(stepPlace, valuePlace);
+  // Add in decimal units so steps like 0.12 to 0.13 preserve the lower digits cleanly.
+  const digits = BigInt(whole + fraction) * 10n ** BigInt(valuePlace - commonPlace);
+  const step = BigInt(direction) * 10n ** BigInt(stepPlace - commonPlace);
+  return Number((digits + step) + "e" + commonPlace);
+}
+
+function mountNumberSteppers() {
+  for (const input of all('input[type="number"]')) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "number-stepper";
+    const buttons = document.createElement("div");
+    buttons.className = "number-stepper-buttons";
+    input.before(wrapper);
+    wrapper.append(input, buttons);
+
+    const fieldName = input.getAttribute("aria-label") || input.labels[0]?.textContent.trim() || "value";
+    const commit = () => input.dispatchEvent(new Event("change", {bubbles: true}));
+    const adjust = direction => {
+      if (input.matches(":disabled") || input.readOnly) return;
+      if (!Number.isFinite(input.valueAsNumber)) commit();
+      const current = input.valueAsNumber;
+      if (!Number.isFinite(current)) return;
+      const integral = input.step === "1";
+      const value = integral ? Math.round(current) : current;
+      const min = input.min === "" ? -Infinity : Number(input.min);
+      const max = input.max === "" ? Infinity : Number(input.max);
+      const next = Math.max(min, Math.min(max, stepSecondDigit(value, direction, integral)));
+      if (Number.isFinite(next)) {
+        input.valueAsNumber = next;
+        commit();
+      }
+    };
+    for (const [direction, symbol, verb] of [[1, "+", "Increase"], [-1, "−", "Decrease"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.tabIndex = -1;
+      button.textContent = symbol;
+      button.setAttribute("aria-label", verb + " " + fieldName);
+      button.addEventListener("mousedown", event => {
+        if (document.activeElement === input) event.preventDefault();
+      });
+      button.addEventListener("click", () => adjust(direction));
+      buttons.append(button);
+    }
+    input.addEventListener("keydown", event => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      adjust(event.key === "ArrowUp" ? 1 : -1);
+    });
+  }
 }
 
 function makeKnob(spec, values, kind) {
@@ -2352,6 +2886,16 @@ function normalizeSetup({keepStores = false} = {}) {
   if (setup.initialMass * 0.01 < 0.01) write("setup-minimum", exact(setup.initialMass * 0.01));
 }
 
+function syncSetupControls(options) {
+  for (const [key] of SETUP_KNOBS) controls.get(key).sync(setup[key]);
+  normalizeSetup(options);
+}
+
+function syncSetupLock() {
+  $("setup-fields").disabled = setupLocked || commandPending;
+  write("setup-state", setupAfterRestart ? "Preset on restart" : setupLocked ? "Locked until restart" : "New run");
+}
+
 function setParameter(key, value, kind) {
   if (kind !== "setup") {
     setLiveParameters({[key]: value});
@@ -2371,9 +2915,10 @@ function setParameter(key, value, kind) {
   normalizeSetup();
   if (key === "radius") chooseCenter();
   post("setup", {setup, watch});
+  syncPreset();
 }
 
-function setLiveParameters(values) {
+function setLiveParameters(values, consolidation) {
   const changes = {};
   for (const [key, value] of Object.entries(values)) {
     if (params[key] === value) continue;
@@ -2381,21 +2926,276 @@ function setLiveParameters(values) {
     controls.get(key).sync(value);
     changes[key] = value;
   }
-  if (!Object.keys(changes).length) return;
-  if (!setupLocked && ("energyCapacity" in changes || "wasteCapacity" in changes)) {
-    normalizeSetup();
-    post("tune", {values: changes, setup});
-  } else {
-    post("tune", {values: changes});
+  let scCycle;
+  if (consolidation && SC_GENETIC_KEYS.some(key => scDraft.consolidation[key] !== consolidation[key])) {
+    scDraft = scCycleSettings({consolidation}, scDraft);
+    scCycle = scDraft;
+    syncScControls();
   }
+  if (!Object.keys(changes).length && !scCycle) return;
+  const updatesSetup = !setupLocked && ("energyCapacity" in changes || "wasteCapacity" in changes);
+  if (updatesSetup) normalizeSetup();
+  post("tune", {values: changes, setup: updatesSetup ? setup : undefined, scCycle});
   syncPreset();
 }
 
+function sameSettings(current, expected) {
+  return Object.entries(expected).every(([key, value]) =>
+    typeof value === "object" ? sameSettings(current[key], value) : current[key] === value);
+}
+
+function currentPresetSettings() {
+  return {
+    setup: {...setup, ...setupAfterRestart},
+    params: {...params, ...scDraft.consolidation},
+    scCycle: scDraft,
+    playback: playbackSettings(),
+  };
+}
+
 function syncPreset() {
-  const selected = Object.keys(MODEL_PRESETS).find(name =>
+  const menu = $("model-preset");
+  if (selectedPreset) {
+    const index = savedPresets.indexOf(selectedPreset);
+    if (index === -1) {
+      menu.value = "";
+      return;
+    }
+    if (sameSettings(currentPresetSettings(), selectedPreset.settings)) {
+      menu.value = "saved-" + index;
+      return;
+    }
+  }
+  const usesDefaultInheritance = SC_GENETIC_KEYS.every(key => scDraft.consolidation[key] === DEFAULT_CONSOLIDATION[key]);
+  const selected = usesDefaultInheritance && Object.keys(MODEL_PRESETS).find(name =>
     Object.entries(MODEL_PRESETS[name]).every(([key, value]) => params[key] === value)
   );
-  $("model-preset").value = selected ?? "";
+  menu.value = selected || "";
+}
+
+function setPresetStatus(message, error = false) {
+  write("preset-status", message);
+  $("preset-status").classList.toggle("error", error);
+}
+
+function presetsByContents() {
+  return new Map(savedPresets.map(preset => [JSON.stringify(preset), preset]));
+}
+
+function addPresets(presets) {
+  const existing = presetsByContents();
+  return presets.map(preset => {
+    const contents = JSON.stringify(preset);
+    if (existing.has(contents)) return existing.get(contents);
+    savedPresets.push(preset);
+    existing.set(contents, preset);
+    return preset;
+  });
+}
+
+function renderSavedPresets() {
+  const group = $("saved-presets");
+  const names = new Set();
+  group.replaceChildren(...savedPresets.map(({name}, index) => {
+    let label = name;
+    let count = 1;
+    while (names.has(label)) label = name + " (" + ++count + ")";
+    names.add(label);
+    return new Option(label, "saved-" + index);
+  }));
+  group.hidden = savedPresets.length === 0;
+  syncPreset();
+  if ($("preset-manage-dialog").open) renderPresetManager();
+}
+
+function rememberPresets() {
+  try {
+    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(savedPresets));
+    return "";
+  } catch {
+    return " This change lasts for the current session.";
+  }
+}
+
+function renderPresetManager() {
+  const list = $("preset-manage-list");
+  const remove = $("preset-remove");
+  const rows = Array.from($("saved-presets").children, (option, index) => {
+    const preset = savedPresets[index];
+    const row = document.createElement("li");
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = checkedPresets.has(preset);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) checkedPresets.add(preset);
+      else checkedPresets.delete(preset);
+      remove.disabled = checkedPresets.size === 0;
+    });
+    const name = document.createElement("span");
+    name.textContent = option.label;
+    label.append(checkbox, name);
+    row.append(label);
+    return row;
+  });
+  list.replaceChildren(...rows);
+  list.hidden = rows.length === 0;
+  $("preset-manage-empty").hidden = rows.length > 0;
+  remove.hidden = list.hidden;
+  remove.disabled = checkedPresets.size === 0;
+  $("preset-undo").hidden = lastPresetRemoval.length === 0;
+}
+
+function removeCheckedPresets() {
+  if (!checkedPresets.size) return;
+  lastPresetRemoval = savedPresets.flatMap((preset, index) =>
+    checkedPresets.has(preset) ? [{preset, index}] : []);
+  for (const {index} of lastPresetRemoval.slice().reverse()) savedPresets.splice(index, 1);
+  checkedPresets.clear();
+  renderSavedPresets();
+  setPresetStatus(setupAfterRestart ? "Initial setup applies on restart." : "");
+  const count = lastPresetRemoval.length;
+  write("preset-manage-status", "Removed " + int.format(count) + (count === 1 ? " preset." : " presets.") + rememberPresets());
+  $("preset-undo").focus();
+}
+
+function undoPresetRemoval() {
+  if (!lastPresetRemoval.length) return;
+  const existing = presetsByContents();
+  for (const {preset, index} of lastPresetRemoval) {
+    const matching = existing.get(JSON.stringify(preset));
+    if (!matching) savedPresets.splice(index, 0, preset);
+    else if (selectedPreset === preset) selectedPreset = matching;
+  }
+  lastPresetRemoval = [];
+  renderSavedPresets();
+  write("preset-manage-status", "Removal undone." + rememberPresets());
+  $("preset-manage-done").focus();
+}
+
+async function importPresets(input) {
+  const files = Array.from(input.files).filter(file => presetExtension(file.name));
+  input.value = "";
+  if (!files.length) {
+    setPresetStatus("No " + PRESET_EXTENSIONS.join(" or ") + " files found.");
+    return;
+  }
+  setPresetStatus("Loading presets…");
+  const presets = [];
+  const invalid = [];
+  for (const file of files) {
+    try {
+      presets.push(loadPreset(JSON.parse(await file.text())));
+    } catch {
+      invalid.push(file.name);
+    }
+  }
+  const countBefore = savedPresets.length;
+  addPresets(presets);
+  const added = savedPresets.length - countBefore;
+  const duplicates = presets.length - added;
+  const messages = [];
+  if (added) {
+    renderSavedPresets();
+    messages.push("Loaded " + int.format(added) + (added === 1 ? " preset." : " presets.") + rememberPresets());
+  }
+  if (duplicates) messages.push(int.format(duplicates) + " already loaded.");
+  if (invalid.length) {
+    messages.push(invalid.length === 1
+      ? "Could not read “" + invalid[0] + "” as a preset."
+      : "Could not read " + int.format(invalid.length) + " preset files.");
+  }
+  setPresetStatus(messages.join(" "), invalid.length > 0);
+}
+
+function applySettingsPreset(preset) {
+  const {setup: {startingGeneSwitches, ...initial}, params: values, scCycle, playback} = preset.settings;
+  const useInitialNow = !setupLocked && !commandPending;
+  const radiusChanged = useInitialNow && setup.radius !== initial.radius;
+  const switchChanges = Object.fromEntries(Object.entries(startingGeneSwitches)
+    .filter(([key, value]) => setup.startingGeneSwitches[key] !== value));
+  setupAfterRestart = !useInitialNow && !sameSettings(setup, initial) ? initial : null;
+  if (useInitialNow) Object.assign(setup, initial);
+  Object.assign(setup.startingGeneSwitches, switchChanges);
+  params = {...values};
+  scDraft = scCycle;
+  for (const [key, value] of Object.entries(params)) controls.get(key)?.sync(value);
+  syncSetupControls({keepStores: !useInitialNow});
+  syncGeneTree();
+  syncScControls();
+  syncSetupLock();
+  if (radiusChanged) chooseCenter();
+  syncPlaybackControls(playback);
+  if (running) prepareCheckpointChime();
+  const resets = !useInitialNow && Object.keys(switchChanges).length
+    ? {geneSwitches: switchChanges, revision: ++geneRevision}
+    : {};
+  post("apply-preset", {params, scCycle, playback, setup: useInitialNow ? setup : undefined, watch, ...resets});
+  setPresetStatus(setupAfterRestart ? "Initial setup applies on restart." : "");
+}
+
+function mountPresets() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY) ?? "[]");
+    if (Array.isArray(stored)) {
+      const presets = stored.flatMap(data => {
+        try { return [loadPreset(data)]; } catch { return []; }
+      });
+      addPresets(presets);
+    }
+  } catch {
+    // File import and export also work when the browser blocks local storage.
+  }
+  renderSavedPresets();
+
+  const files = $("preset-files");
+  files.accept = PRESET_EXTENSIONS.join(",");
+  files.addEventListener("change", () => importPresets(files));
+  const saver = $("preset-save-dialog");
+  const manager = $("preset-manage-dialog");
+  const name = $("preset-name");
+  $("model-preset").addEventListener("change", event => {
+    const selection = event.target.value;
+    if (selection === "load-presets") {
+      syncPreset();
+      files.click();
+      return;
+    } else if (selection === "save-preset") {
+      name.value = "";
+      write("preset-save-error", "");
+      saver.showModal();
+    } else if (selection === "manage-presets") {
+      checkedPresets.clear();
+      if (!lastPresetRemoval.length) write("preset-manage-status", "");
+      renderPresetManager();
+      manager.showModal();
+    } else {
+      selectedPreset = selection.startsWith("saved-") ? savedPresets[Number(selection.slice(6))] : null;
+      if (selectedPreset) applySettingsPreset(selectedPreset);
+      else if (MODEL_PRESETS[selection]) {
+        setPresetStatus("");
+        setLiveParameters(MODEL_PRESETS[selection], DEFAULT_CONSOLIDATION);
+      }
+    }
+    syncPreset();
+  });
+  $("preset-remove").addEventListener("click", removeCheckedPresets);
+  $("preset-undo").addEventListener("click", undoPresetRemoval);
+  $("cancel-preset-save").addEventListener("click", () => saver.close());
+  $("preset-save-form").addEventListener("submit", event => {
+    event.preventDefault();
+    try {
+      const preset = createPreset(name.value, currentPresetSettings());
+      const blob = new Blob([JSON.stringify(preset, null, 2) + "\n"], {type: "application/json"});
+      download(blob, presetFilename(preset.name));
+      [selectedPreset] = addPresets([preset]);
+      renderSavedPresets();
+      setPresetStatus("Saved “" + preset.name + "”." + rememberPresets());
+      saver.close();
+    } catch (error) {
+      write("preset-save-error", error.message);
+    }
+  });
 }
 
 function syncGeneTree() {
@@ -2468,6 +3268,7 @@ function mountGeneNode(node, list, ancestors = []) {
     Object.assign(setup.startingGeneSwitches, values);
     syncGeneTree();
     post("gene-switches", {values, revision: ++geneRevision});
+    syncPreset();
   });
   return keys;
 }
@@ -2486,12 +3287,6 @@ function mountControls() {
     const content = document.createElement("div");
     content.className = "knobs";
     for (const knob of knobs) content.append(makeKnob(knob, params, "live"));
-    if (name === "Inheritance") {
-      const note = document.createElement("p");
-      note.className = "note";
-      note.textContent = "Switching OFF discards the weight. Switching ON draws a fresh weight uniformly from the founder range.";
-      content.append(note);
-    }
     detail.append(summary, content);
     $("runtime-controls").append(detail);
   }
@@ -2637,16 +3432,25 @@ function newRun() {
   runId++;
   resetRunView();
   setFileStatus("");
-  normalizeSetup();
+  if (setupAfterRestart) {
+    Object.assign(setup, setupAfterRestart);
+    setupAfterRestart = null;
+    syncSetupControls();
+    setPresetStatus("");
+  } else {
+    normalizeSetup();
+  }
   chooseCenter();
+  syncPreset();
   renderStatus("loading", 0);
-  post("reset", {setup, params, watch, speed: speedValue(), refresh: refreshValue(), pauseAtTick});
+  post("reset", {setup, params, scCycle: scDraft, watch, ...playbackSettings()});
 }
 
 function syncFileButtons() {
   $("import").disabled = !ready || fileBusy;
   $("export").disabled = !ready || fileBusy || failed;
   $("restart").disabled = !ready || fileBusy;
+  $("model-preset").disabled = !ready || fileBusy;
 }
 
 function setFileStatus(message, error = false) {
@@ -2665,7 +3469,7 @@ function renderStatus(reason, tick) {
   active.className = "status " + reason;
   write("run-status-text", {
     ready: "Ready", paused: "Paused", running: "Running",
-    checkpoint: "Checkpoint", error: "Stopped", loading: "Loading",
+    checkpoint: "Checkpoint at tick " + int.format(tick), error: "Stopped", loading: "Loading",
   }[reason]);
   const tickRate = $("run-tick-rate");
   tickRate.hidden = !running;
@@ -2675,8 +3479,7 @@ function renderStatus(reason, tick) {
   syncFileButtons();
   $("play").lastElementChild.textContent = running ? "Pause" : tick > 0 ? "Resume" : "Start";
   $("play").firstElementChild.className = "icon " + (running ? "icon-pause" : "icon-play");
-  $("setup-fields").disabled = setupLocked;
-  write("setup-state", setupLocked ? "Locked until restart" : "New run");
+  syncSetupLock();
   const notice = $("run-notice");
   notice.hidden = !checkpoint && !failed;
   notice.classList.toggle("error", failed);
@@ -2685,15 +3488,29 @@ function renderStatus(reason, tick) {
 
 function speedValue() { return SPEEDS[$("speed").valueAsNumber]; }
 function refreshValue() { return REFRESHES[$("refresh").valueAsNumber]; }
+function playbackSettings() { return {speed: speedValue(), refresh: refreshValue(), pauseAtTick}; }
 
-function updateTiming() {
+function renderTiming() {
   rangeFill($("speed"));
   rangeFill($("refresh"));
   write("speed-value", speedValue() ? int.format(speedValue()) + " ticks/s" : "Max");
   write("refresh-value", refreshValue() ? dec.format(refreshValue() / 1000) + " s" : "Every tick");
   $("speed").setAttribute("aria-valuetext", $("speed-value").textContent);
   $("refresh").setAttribute("aria-valuetext", $("refresh-value").textContent);
-  post("display", {speed: speedValue(), refresh: refreshValue()});
+}
+
+function updateTiming() {
+  renderTiming();
+  post("display", playbackSettings());
+  syncPreset();
+}
+
+function syncPlaybackControls(playback) {
+  $("speed").value = String(SPEEDS.indexOf(playback.speed));
+  $("refresh").value = String(REFRESHES.indexOf(playback.refresh));
+  pauseAtTick = playback.pauseAtTick;
+  $("pause-at-tick").value = String(pauseAtTick);
+  renderTiming();
 }
 
 function presentFrame(data) {
@@ -2701,6 +3518,8 @@ function presentFrame(data) {
   lastFrame = data.frame;
   snapshot = data.snapshot;
   latestSummary = data.summary;
+  scLive = {scCycle: data.scCycle, params: data.params, scReading: data.scReading};
+  renderScReadout();
   if (data.watchToken === watch.token) {
     inspector = snapshot.inspect;
     inspectedAt = snapshot.tick;
@@ -2730,20 +3549,20 @@ function showImportedRun(data) {
   runId = data.nextRunId;
   resetRunView();
   setup = data.setup;
+  setupAfterRestart = null;
+  selectedPreset = null;
+  setPresetStatus("");
   params = data.params;
+  scDraft = scDraftWithTicks(data.scCycle, params);
+  syncScControls();
   watch = data.watch;
   inspector = null;
   hoverCell = -1;
-  for (const [key] of SETUP_KNOBS) controls.get(key).sync(setup[key]);
-  for (const [key, value] of Object.entries(params)) controls.get(key).sync(value);
-  normalizeSetup({keepStores: data.tick > 0});
+  for (const [key, value] of Object.entries(params)) controls.get(key)?.sync(value);
+  syncSetupControls({keepStores: data.tick > 0});
   syncGeneTree();
+  syncPlaybackControls(data.playback);
   syncPreset();
-  $("speed").value = String(SPEEDS.indexOf(data.playback.speed));
-  $("refresh").value = String(REFRESHES.indexOf(data.playback.refresh));
-  pauseAtTick = data.playback.pauseAtTick;
-  $("pause-at-tick").value = String(pauseAtTick);
-  updateTiming();
   fileBusy = false;
   renderStatus("loading", data.tick);
   setFileStatus("Loaded tick " + int.format(data.tick) + ". " + (data.tick ? "Resume to continue." : "Press Start to begin.")
@@ -2756,6 +3575,7 @@ function receive({data}) {
     case "status":
       commandPending = false;
       renderStatus(data.reason, data.tick);
+      if (data.reason === "checkpoint") playCheckpointChime(data.runId);
       break;
     case "tick-rate":
       if (running) {
@@ -3146,6 +3966,207 @@ function canvasContext(canvas) {
   return {ctx, width, height};
 }
 
+function drawScPlot(id, points, {labels, levels, color, marker}) {
+  const plot = canvasContext($(id));
+  if (!plot) return;
+  const {ctx, width, height} = plot;
+  ctx.font = "11px ui-monospace, monospace";
+  const left = Math.ceil(Math.max(...levels.map(([, label]) => ctx.measureText(label).width))) + 10;
+  const right = width - 9;
+  const top = 8;
+  const bottom = height - 20;
+  const x = portion => left + portion * (right - left);
+  const y = value => bottom - value * (bottom - top);
+  ctx.fillStyle = "#b1af9d";
+  ctx.strokeStyle = "#3a3e30";
+  ctx.lineWidth = 1;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "right";
+  for (const [value, label] of levels) {
+    const position = y(value);
+    ctx.fillText(label, left - 6, position);
+    ctx.beginPath();
+    ctx.moveTo(left, position);
+    ctx.lineTo(right, position);
+    ctx.stroke();
+  }
+  labels.forEach((label, i) => {
+    ctx.textAlign = ["left", "center", "right"][i];
+    ctx.fillText(label, x(i / 2), height - 7);
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  points.forEach(([offset, value], i) => {
+    if (i) ctx.lineTo(x(offset), y(value));
+    else ctx.moveTo(x(offset), y(value));
+  });
+  ctx.stroke();
+  if (marker) {
+    ctx.strokeStyle = "#edb76680";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x(marker[0]), top);
+    ctx.lineTo(x(marker[0]), bottom);
+    ctx.stroke();
+    ctx.fillStyle = "#edb766";
+    ctx.beginPath();
+    ctx.arc(x(marker[0]), y(marker[1]), 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
+
+function drawScProfiles() {
+  if (!$("sc-dialog").open) return;
+  const span = Math.min(Number.MAX_VALUE, 3 * Math.max(scDraft.search.mutationWidth, scDraft.consolidation.mutationWidth)) || 1;
+  const levels = [[1, "1"], [0.5, "0.5"], [0, "0"]];
+  const labels = [axisValue(-span), "0", axisValue(span)];
+  for (const [endpoint, color] of [["search", "#c9dc9d"], ["consolidation", "#edb766"]]) {
+    const values = scDraft[endpoint];
+    const points = Array.from({length: 161}, (_, index) => {
+      const fraction = index / 160;
+      return [fraction, sausageProfile(span * (2 * fraction - 1), values)];
+    });
+    drawScPlot("sc-" + endpoint + "-curve", points, {labels, levels, color});
+  }
+}
+
+function scDraftWithTicks(settings, modelParams) {
+  if (settings.searchLength !== undefined) return settings;
+  const {search, transition} = scCycleTiming(settings);
+  const transitionLength = Math.min(settings.period, Math.round(2 * transition));
+  return scCycleSettings({
+    searchLength: settings.enabled ? Math.min(settings.period - transitionLength, Math.round(search)) : 0,
+    transitionLength,
+    consolidation: settings.enabled ? settings.consolidation : scGeneticParameters(modelParams),
+  }, settings);
+}
+
+function drawScWave() {
+  if (!$("sc-dialog").open) return;
+  const {period} = scDraft;
+  const {search, transition} = scCycleTiming(scDraft);
+  let points;
+  if (transition === 0) {
+    const switchAt = search / period;
+    points = switchAt === 0 || switchAt === 1
+      ? [[0, switchAt], [1, switchAt]]
+      : [[0, 1], [switchAt, 1], [switchAt, 0], [1, 0], [1, 1]];
+  } else {
+    const boundaries = [0, search, search + transition, period - transition, period];
+    points = boundaries.slice(1).flatMap((end, i) => {
+      const start = boundaries[i];
+      return Array.from({length: 33}, (_, j) => {
+        const elapsed = j === 32 ? end : start + (end - start) * j / 32;
+        return [elapsed / period, 1 - scCyclePulse(scDraft, elapsed).consolidationWeight];
+      });
+    });
+  }
+  const phase = scLive.scReading;
+  const liveTiming = scCycleTiming(scLive.scCycle);
+  const sameTiming = scLive.scCycle.period === period && liveTiming.search === search && liveTiming.transition === transition;
+  const marker = phase && sameTiming ? [phase.elapsed / period, 1 - phase.consolidationWeight] : null;
+  const timeLabel = value => value >= 1e6 ? compact.format(value) : dec.format(value);
+  drawScPlot("sc-wave-curve", points, {
+    labels: ["0", timeLabel(period / 2), timeLabel(period)],
+    levels: [[1, "Search"], [0.5, ""], [0, "Consolidation"]],
+    color: "#c9dc9d", marker,
+  });
+}
+
+function renderScReadout() {
+  const {scCycle, scReading, params: applied} = scLive;
+  const phase = scReading?.phase ?? (scCycle.enabled ? "ready" : "consolidation");
+  const name = SC_PHASE_NAMES[phase];
+  const badge = $("sc-phase-badge");
+  badge.hidden = !scCycle.enabled;
+  if (scCycle.enabled && badge.dataset.phase !== phase) {
+    badge.dataset.phase = phase;
+    badge.textContent = "SC · " + name.replace("Transition to ", "To ");
+  }
+  if (!$("sc-dialog").open) return;
+  if ($("sc-phase").textContent !== name) write("sc-phase", name);
+  const effective = scReading?.parameters ?? applied;
+  for (const [key, {cell, unit, scale}] of scOutputs) {
+    cell.textContent = axisValue(effective[key] * scale) + unit;
+  }
+  drawScWave();
+}
+
+function syncScControls() {
+  for (const sync of scInputs) sync();
+  drawScProfiles();
+  renderScReadout();
+}
+
+function changeScSettings(changes) {
+  scDraft = scCycleSettings(changes, scDraft);
+  syncScControls();
+  syncPreset();
+  post("sc-cycle", {values: scDraft});
+}
+
+function mountScControls() {
+  const dialog = $("sc-dialog");
+  const bindNumber = (input, {min, max, scale = 1, step = "any"}, read, edit) => {
+    input.step = step;
+    const sync = () => {
+      input.min = typeof min === "function" ? min() : min;
+      input.max = typeof max === "function" ? max() : max;
+      input.value = String(Number((read() * scale).toPrecision(16)));
+    };
+    const commit = () => {
+      const value = input.valueAsNumber / scale;
+      if (Number.isFinite(value) && input.checkValidity() && value !== read()) edit(value);
+      sync();
+    };
+    input.addEventListener("change", commit);
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") commit();
+    });
+    scInputs.push(sync);
+  };
+  const durations = [
+    ["sc-period", "period", () => Math.max(1, scDraft.searchLength + scDraft.transitionLength), Number.MAX_SAFE_INTEGER],
+    ["sc-search-length", "searchLength", 0, () => scDraft.period - scDraft.transitionLength],
+    ["sc-transition-length", "transitionLength", 0, () => scDraft.period - scDraft.searchLength],
+  ];
+  for (const [id, key, min, max] of durations) {
+    bindNumber($(id), {min, max, step: "1"}, () => scDraft[key], value => changeScSettings({[key]: value}));
+  }
+  for (const [key, name, unit, options] of INHERITANCE_FIELDS) {
+    const row = $("sc-endpoint-fields").insertRow();
+    const header = document.createElement("th");
+    header.scope = "row";
+    header.textContent = name + (unit ? " (" + unit + ")" : "");
+    row.append(header);
+    const {scale = 1} = options;
+    for (const phase of ["Search", "Consolidation"]) {
+      const endpoint = phase.toLowerCase();
+      const input = document.createElement("input");
+      input.type = "number";
+      input.inputMode = "decimal";
+      input.setAttribute("aria-label", phase + " " + name + (unit ? " (" + unit + ")" : ""));
+      row.insertCell().append(input);
+      bindNumber(input, options, () => scDraft[endpoint][key], value => changeScSettings({[endpoint]: {[key]: value}}));
+    }
+    const cell = row.insertCell();
+    cell.className = "sc-value";
+    scOutputs.set(key, {cell, unit, scale});
+  }
+  $("inheritance-options").prepend(makeKnob(["mutateParent", "Mutate original pattern", "toggle"], params, "live"));
+  $("sc-open").addEventListener("click", () => {
+    dialog.showModal();
+    syncScControls();
+  });
+  new ResizeObserver(() => {
+    drawScProfiles();
+    drawScWave();
+  }).observe(dialog);
+  syncScControls();
+}
+
 function hexPath(ctx, x, y, radius) {
   const side = Math.sqrt(3) * radius / 2;
   ctx.beginPath();
@@ -3167,9 +4188,9 @@ function foodColor(score) {
 }
 
 function renderDish() {
-  const canvas = $("dish");
-  const context = canvasContext(canvas);
-  if (!context || !snapshot) return;
+  if (!snapshot) return;
+  const context = canvasContext($("dish"));
+  if (!context) return;
   const {ctx, width, height} = context;
   const cells = snapshot.cells;
   const radius = cells.at(-1).r;
@@ -3601,20 +4622,56 @@ function drawChart({ctx, width, height}, series, first, last, kind, resets) {
   ctx.restore();
 }
 
+function prepareCheckpointChime() {
+  if (!pauseAtTick) return;
+  const Context = window.AudioContext ?? window.webkitAudioContext;
+  if (!Context) return;
+  try {
+    checkpointAudio ??= new Context();
+    if (checkpointAudio.state !== "running") {
+      checkpointAudioReady = checkpointAudio.resume().catch(() => {});
+    }
+  } catch {
+    // Playback controls still work when audio is unavailable.
+  }
+}
+
+async function playCheckpointChime(reachedRunId) {
+  const audio = checkpointAudio;
+  if (!audio) return;
+  await checkpointAudioReady;
+  if (runId !== reachedRunId || !checkpoint || audio.state !== "running") return;
+
+  const start = audio.currentTime + 0.02;
+  for (const [index, frequency] of [293.66, 369.99, 440].entries()) {
+    const begins = start + index * 0.3;
+    const ends = begins + 2.15;
+    const peak = 0.055 / (1 + index * 0.25);
+    const tone = audio.createOscillator();
+    const volume = audio.createGain();
+    tone.frequency.value = frequency;
+    volume.gain.setValueAtTime(0, begins);
+    volume.gain.linearRampToValueAtTime(peak, begins + 0.1);
+    volume.gain.exponentialRampToValueAtTime(peak * 0.45, begins + 0.6);
+    volume.gain.linearRampToValueAtTime(0, ends);
+    tone.connect(volume).connect(audio.destination);
+    tone.start(begins);
+    tone.stop(ends);
+  }
+}
+
 function mountEvents() {
   $("speed").addEventListener("input", updateTiming);
   $("refresh").addEventListener("input", updateTiming);
-  $("model-preset").addEventListener("change", event => {
-    const preset = MODEL_PRESETS[event.target.value];
-    if (preset) setLiveParameters(preset);
-  });
   const pauseInput = $("pause-at-tick");
   pauseInput.value = String(pauseAtTick);
   const commitPauseTick = () => {
     const value = pauseInput.valueAsNumber;
     if (Number.isSafeInteger(value) && value >= 0 && value !== pauseAtTick) {
       pauseAtTick = value;
+      if (running) prepareCheckpointChime();
       post("pause-at-tick", {tick: pauseAtTick});
+      syncPreset();
     }
     pauseInput.value = String(pauseAtTick);
   };
@@ -3622,6 +4679,7 @@ function mountEvents() {
   pauseInput.addEventListener("blur", commitPauseTick);
   pauseInput.addEventListener("keydown", event => { if (event.key === "Enter") commitPauseTick(); });
   $("play").addEventListener("click", () => {
+    if (!running) prepareCheckpointChime();
     commandPending = true;
     $("play").disabled = true;
     $("step").disabled = true;
@@ -3629,6 +4687,7 @@ function mountEvents() {
     post(running ? "pause" : "start");
   });
   $("step").addEventListener("click", () => {
+    prepareCheckpointChime();
     commandPending = true;
     $("play").disabled = true;
     $("step").disabled = true;
@@ -3769,6 +4828,7 @@ function mountFavicon() {
 
 function launch() {
   mountControls();
+  mountScControls();
   const embedded = $("worker-source");
   if (embedded) {
     const source = new Blob([$("model-source").textContent, "\n", embedded.textContent], {type: "text/javascript"});
@@ -3787,7 +4847,9 @@ function launch() {
     $("import").disabled = true;
   });
   mountEvents();
-  updateTiming();
+  mountPresets();
+  mountNumberSteppers();
+  renderTiming();
   newRun();
 }
 

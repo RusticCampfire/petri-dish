@@ -1,6 +1,6 @@
 # Petri Dish Evolution Simulator
 
-The current stable release is **v0.4.1**.
+The current stable release is **v0.5**.
 
 Petri Dish models a population evolving on a hexagonal grid. Adjust model parameters, try different food presets, inspect individual entities, and save and resume runs.
 

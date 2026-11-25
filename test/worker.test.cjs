@@ -153,6 +153,85 @@ test("file errors leave the current run available to step", async () => {
   assert.equal(messages.at(-1).tick, 2);
 });
 
+test("the worker preserves queued SC Cycle settings through founder previews, export and import", async () => {
+  const worker = makeWorker();
+  const {send, exportRun, messages} = worker;
+  send("reset", quietStart());
+  send("sc-cycle", {values: {enabled: true, period: 8, searchProportion: 0.25, transitionProportion: 0}});
+  send("tune", {values: {foodMean: 3}});
+  const saved = await exportRun();
+  assert.equal(saved.checkpoint.scCycle.enabled, false);
+  assert.equal(saved.checkpoint.pendingScCycle.enabled, true);
+  assert.equal(saved.checkpoint.pendingScCycle.period, 8);
+
+  const file = new Blob([JSON.stringify(saved)]);
+  await send("import", {file, nextRunId: 2});
+  assert.equal(messages.find(message => message.type === "imported").scCycle.period, 8);
+  worker.runId = 2;
+  send("step");
+  assert.equal(messages.find(message => message.type === "frame").scReading.phase, "search");
+  assert.equal((await exportRun()).checkpoint.scCycleStartTick, 1);
+  send("sc-cycle", {values: {enabled: false}});
+  send("step");
+  const frame = messages.find(message => message.type === "frame");
+  assert.equal(frame.scReading, null);
+  assert.equal(frame.scCycle.enabled, false);
+});
+
+test("a model preset applies its consolidation settings through the worker's founder preview", async () => {
+  const {send, messages, exportRun} = makeWorker();
+  send("reset", {...quietStart(), scCycle: {
+    period: 10, searchLength: 0, transitionLength: 2, consolidation: {mutationRate: 0},
+  }});
+  send("tune", {values: {foodMean: 1.5, mutateParent: true}, scCycle: {consolidation: {mutationRate: 0.2}}});
+  const before = await exportRun();
+  assert.equal(before.checkpoint.pendingScCycle.consolidation.mutationRate, 0.2);
+  send("step");
+  const frame = messages.find(message => message.type === "frame");
+  assert.equal(frame.params.foodMean, 1.5);
+  assert.equal(frame.params.mutateParent, true);
+  assert.equal(frame.params.mutationRate, 0.2);
+  assert.equal(frame.scReading, null);
+});
+
+test("a saved preset rebuilds the founder preview and queues live edits after the run begins", async () => {
+  const {send, messages, exportRun} = makeWorker();
+  const start = quietStart();
+  const scCycle = {period: 21, searchLength: 3, transitionLength: 4};
+  const playback = {speed: 50, refresh: 500, pauseAtTick: 12};
+  const setup = {...start.setup, radius: 2, founders: 5};
+  const watch = {cell: 9, token: 1};
+  send("reset", start);
+  send("sc-cycle", {values: {period: 8, searchLength: 2, transitionLength: 0}});
+  send("apply-preset", {setup, params: {...start.params, foodMean: 4}, scCycle, playback, watch});
+  const preview = messages.find(message => message.type === "frame");
+  assert.equal(preview.watchToken, 1);
+  assert.equal(preview.snapshot.cells.length, 19);
+  const beforeStart = await exportRun();
+  assert.equal(beforeStart.tick, 0);
+  assert.equal(beforeStart.entities.length, 5);
+  assert.equal(beforeStart.checkpoint.scCycle.period, 21);
+  assert.equal(beforeStart.checkpoint.pendingScCycle, null);
+  assert.deepEqual(beforeStart.checkpoint.playback, playback);
+
+  send("step");
+  send("apply-preset", {params: {...start.params, foodMean: 6}, scCycle: {...scCycle, searchLength: 0}, playback,
+    geneSwitches: {"growth.mass": false}, revision: 1});
+  const beforeStep = await exportRun();
+  assert.equal(beforeStep.tick, 1);
+  assert.equal(beforeStep.checkpoint.pendingScCycle.searchLength, 0);
+  assert.equal(beforeStep.checkpoint.pendingParameters.foodMean, 6);
+  send("step");
+  assert.equal(messages.find(message => message.type === "genes-applied").revision, 1);
+  const continued = await exportRun();
+  assert.deepEqual(continued.history.slice(0, 2), beforeStep.history);
+  assert.equal(continued.tick, 2);
+  assert.equal(continued.setup.radius, 2);
+  assert.equal(continued.appliedParameters.foodMean, 6);
+  assert.equal(continued.appliedGeneSwitches["growth.mass"], false);
+  assert.equal(continued.checkpoint.scCycle.searchLength, 0);
+});
+
 test("a browser checkpoint can advance in Node and return with its full history and queued edits", async t => {
   const folder = await mkdtemp(join(tmpdir(), "petri-round-trip-"));
   t.after(() => rm(folder, {recursive: true, force: true}));
